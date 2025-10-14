@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 class SweetImage extends StatelessWidget {
   final String imageAsset;
   final bool isActive;
-  final bool isDetailOpen; // when true (and active), show ~50% by sliding left
+  final bool isDetailOpen; // when true (and active), slide so exactly 50% is hidden
   final VoidCallback onTap;
   final Key? hostKey;
 
@@ -20,16 +20,16 @@ class SweetImage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final goHalfLeft = isDetailOpen && isActive;
-    final alignment = goHalfLeft ? Alignment.centerLeft : Alignment.center;
 
-    final child = _buildAligned(alignment, goHalfLeft);
+    // Always center; we'll handle the left slide in pixels:
+    final child = _buildAligned(Alignment.center, goHalfLeft);
     return isActive ? KeyedSubtree(key: hostKey, child: child) : child;
   }
 
   Widget _buildAligned(Alignment alignment, bool halfOffLeft) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        // Square image, sized to ~88% of page for breathing room
+        // Square hero size (your breathing room preserved)
         final side = math.min(constraints.maxWidth * 0.88, constraints.maxHeight * 0.88);
 
         final img = RepaintBoundary(
@@ -51,21 +51,20 @@ class SweetImage extends StatelessWidget {
 
         final square = SizedBox.square(dimension: side, child: img);
 
+        // Slide by HALF OF PAGE WIDTH (not child width) so exactly 50% becomes hidden.
+        final targetDx = halfOffLeft ? -(constraints.maxWidth * 0.75) : 0.0;
+
         return SizedBox.expand(
-          child: AnimatedAlign(
-            alignment: alignment,
-            duration: const Duration(milliseconds: 260),
+          child: TweenAnimationBuilder<double>(
+            tween: Tween<double>(begin: 0.0, end: targetDx),
+            duration: const Duration(milliseconds: 360),
             curve: Curves.easeOutCubic,
-            child: GestureDetector(
-              onTap: onTap,
-              // In detail mode, shift left by 50% of the square width so only half remains visible.
-              child: halfOffLeft
-                  ? FractionalTranslation(
-                      translation: const Offset(-0.5, 0),
-                      child: square,
-                    )
-                  : square,
-            ),
+            builder: (context, dx, _) {
+              return Transform.translate(
+                offset: Offset(dx, 0),
+                child: Align(alignment: alignment, child: GestureDetector(onTap: onTap, child: square)),
+              );
+            },
           ),
         );
       },
