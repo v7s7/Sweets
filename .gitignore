@@ -1,0 +1,11 @@
+﻿.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+.metadata
+.idea/
+.vscode/
+android/.gradle/
+ios/Pods/
+*.iml

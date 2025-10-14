@@ -1,0 +1,17 @@
+﻿analysis_options.yaml
+lib\app.dart
+lib\core\theme\app_theme.dart
+lib\core\utils\haptics.dart
+lib\features\cart\state\cart_controller.dart
+lib\features\cart\widgets\cart_badge.dart
+lib\features\sweets\data\sweet.dart
+lib\features\sweets\data\sweets_repo.dart
+lib\features\sweets\state\sweets_controller.dart
+lib\features\sweets\widgets\add_to_cart_button.dart
+lib\features\sweets\widgets\nutrition_panel.dart
+lib\features\sweets\widgets\sweet_image.dart
+lib\features\sweets\widgets\sweets_viewport.dart
+lib\main.dart
+pubspec.yaml
+test\widget_test.dart
+web\index.html
