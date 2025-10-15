@@ -51,8 +51,8 @@ class SweetImage extends StatelessWidget {
 
         final square = SizedBox.square(dimension: side, child: img);
 
-        // Slide by HALF OF PAGE WIDTH (not child width) so exactly 50% becomes hidden.
-        final targetDx = halfOffLeft ? -(constraints.maxWidth * 0.75) : 0.0;
+        // Slide by HALF OF THE IMAGE WIDTH so exactly 50% of the image becomes hidden.
+        final targetDx = halfOffLeft ? -(side / 2) : 0.0;
 
         return SizedBox.expand(
           child: TweenAnimationBuilder<double>(
@@ -62,7 +62,10 @@ class SweetImage extends StatelessWidget {
             builder: (context, dx, _) {
               return Transform.translate(
                 offset: Offset(dx, 0),
-                child: Align(alignment: alignment, child: GestureDetector(onTap: onTap, child: square)),
+                child: Align(
+                  alignment: alignment,
+                  child: GestureDetector(onTap: onTap, child: square),
+                ),
               );
             },
           ),

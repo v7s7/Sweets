@@ -15,31 +15,32 @@ class NutritionPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Pills appear on the LEFT when detail is open (to match screenshots)
+    // Nutritional info panel; animates in/out. Neutral about side placement.
     return IgnorePointer(
       ignoring: !visible,
       child: AnimatedOpacity(
         opacity: visible ? 1 : 0,
         duration: const Duration(milliseconds: 180),
         child: AnimatedSlide(
-          offset: visible ? Offset.zero : const Offset(-0.3, 0),
+          // Slide from the right when appearing (works well when panel is aligned right).
+          offset: visible ? Offset.zero : const Offset(0.3, 0),
           duration: const Duration(milliseconds: 280),
           curve: Curves.easeOutCubic,
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 280),
             child: Padding(
-              padding: const EdgeInsets.only(left: 16.0),
+              padding: const EdgeInsets.symmetric(horizontal: 16.0),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _pill(context, title: 'Salt',    value: '${_fmt(sweet.fat)} g',   percent: 3),
+                  _pill(context, title: 'Protein', value: '${_fmt(sweet.protein)} g', percent: 8),
                   const SizedBox(height: 12),
-                  _pill(context, title: 'Sugar',   value: '${_fmt(sweet.carbs)} g', percent: 12),
+                  _pill(context, title: 'Carbs',   value: '${_fmt(sweet.carbs)} g',   percent: 12),
                   const SizedBox(height: 12),
-                  _pill(context, title: 'Fat',     value: '${_fmt(sweet.fat)} g',   percent: 12),
+                  _pill(context, title: 'Fat',     value: '${_fmt(sweet.fat)} g',     percent: 12),
                   const SizedBox(height: 12),
-                  _pill(context, title: 'Energy',  value: '${sweet.calories} cal',  percent: 40),
+                  _pill(context, title: 'Energy',  value: '${sweet.calories} kcal',   percent: 40),
                   const SizedBox(height: 8),
                   IconButton(onPressed: onClose, icon: const Icon(Icons.close_rounded)),
                 ],
@@ -58,7 +59,9 @@ class NutritionPanel extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white.withOpacity(0.85),
         borderRadius: BorderRadius.circular(20),
-        boxShadow: const [BoxShadow(color: Color(0x16000000), blurRadius: 14, offset: Offset(0,8))],
+        boxShadow: const [
+          BoxShadow(color: Color(0x16000000), blurRadius: 14, offset: Offset(0, 8))
+        ],
         border: Border.all(color: const Color(0x10A0A0A0)),
       ),
       child: Row(
@@ -76,9 +79,11 @@ class NutritionPanel extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: const Color(0xFF111111), borderRadius: BorderRadius.circular(14),
+        color: const Color(0xFF111111),
+        borderRadius: BorderRadius.circular(14),
       ),
-      child: Text('$p%', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+      child: Text('$p%',
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
     );
   }
 

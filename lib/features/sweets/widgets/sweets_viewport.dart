@@ -59,6 +59,10 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
   @override
   Widget build(BuildContext context) {
     final sweets = ref.watch(sweetsRepoProvider);
+    if (sweets.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
     final state = ref.watch(sweetsControllerProvider);
     final current = sweets[state.index % sweets.length];
 
@@ -150,7 +154,7 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Text(
-                          total.toStringAsFixed(2),
+                          total.toStringAsFixed(3), // BHD uses 3 decimal places
                           style: TextStyle(
                             color: pink,
                             fontWeight: FontWeight.w800,
@@ -238,7 +242,9 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
     final end = _centerOfKey(_cartBadgeKey);
     if (start == null || end == null) return;
 
+    // Remove any existing entry before starting a new animation
     _flyEntry?.remove();
+    _flyEntry = null;
 
     final controller = AnimationController(
       vsync: this,
@@ -251,7 +257,8 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
     final tweenY = Tween<double>(begin: start.dy, end: end.dy - 8);
     final sizeTween = Tween<double>(begin: 48, end: 16);
 
-    _flyEntry = OverlayEntry(builder: (ctx) {
+    // Create a local entry reference to avoid cross-removal when multiple taps happen
+    final entry = OverlayEntry(builder: (ctx) {
       return AnimatedBuilder(
         animation: curve,
         builder: (ctx, _) {
@@ -289,11 +296,16 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
       );
     });
 
-    overlay.insert(_flyEntry!);
+    overlay.insert(entry);
+    _flyEntry = entry;
+
     controller.addStatusListener((st) {
       if (st == AnimationStatus.completed || st == AnimationStatus.dismissed) {
-        _flyEntry?.remove();
-        _flyEntry = null;
+        // Remove the specific entry created for this animation
+        entry.remove();
+        if (identical(_flyEntry, entry)) {
+          _flyEntry = null;
+        }
         controller.dispose();
       }
     });
