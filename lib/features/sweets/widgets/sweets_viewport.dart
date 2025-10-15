@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../cart/widgets/cart_sheet.dart';
 
 import '../../sweets/data/sweets_repo.dart';
 import '../../sweets/data/sweet.dart';
@@ -33,6 +34,19 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
   final GlobalKey _cartBadgeKey = GlobalKey();
   OverlayEntry? _flyEntry;
 
+  void _openCartSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => const CartSheet(),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -40,7 +54,8 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final sweets = ref.read(sweetsRepoProvider);
       if (sweets.isNotEmpty) {
-        ref.read(sweetsControllerProvider.notifier)
+        ref
+            .read(sweetsControllerProvider.notifier)
             .setIndex(_kInitialPage % sweets.length);
       }
     });
@@ -74,14 +89,7 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
     return Stack(
       clipBehavior: Clip.none,
       children: [
-        // Cart badge (top-right, keep for fly-to-cart target)
-        Positioned(
-          top: 10,
-          right: 12,
-          child: CartBadge(hostKey: _cartBadgeKey),
-        ),
-
-        // Carousel with 15/70/15 peeks; disable scroll while detail open
+        // 1) Carousel with 15/70/15 peeks; disable scroll while detail open
         PageView.builder(
           controller: _pc,
           padEnds: true,
@@ -91,8 +99,7 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
               ? const NeverScrollableScrollPhysics()
               : const BouncingScrollPhysics(),
           onPageChanged: (i) {
-            ref.read(sweetsControllerProvider.notifier)
-               .setIndex(i % sweets.length);
+            ref.read(sweetsControllerProvider.notifier).setIndex(i % sweets.length);
             setState(() => _qty = 1);
           },
           itemBuilder: (ctx, i) {
@@ -101,26 +108,27 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
           },
         ),
 
-        // Mask RIGHT HALF when detail is open so the next item doesn't peek
+        // 2) Mask RIGHT HALF when detail is open so the next item doesn't peek
         if (state.isDetailOpen)
           Positioned(
             top: 0,
             bottom: 0,
             right: 0,
             width: size.width * 0.5,
-            child: IgnorePointer(
-              child: Container(
-                decoration: const BoxDecoration(
+            child: const IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
                   gradient: LinearGradient(
-                    begin: Alignment.topCenter, end: Alignment.bottomCenter,
-                    colors: [ Color(0xFFF9EFF3), Color(0xFFFFF5F8) ],
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Color(0xFFF9EFF3), Color(0xFFFFF5F8)],
                   ),
                 ),
               ),
             ),
           ),
 
-        // ===== Name, pink price (total), counter, and add button — right under the hero =====
+        // 3) Name, pink price (total), counter, and add button — right under the hero
         Align(
           alignment: const Alignment(0, 0.78), // near bottom of hero
           child: IgnorePointer(
@@ -136,8 +144,10 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                     // Name (bold, centered)
                     AnimatedSwitcher(
                       duration: const Duration(milliseconds: 180),
-                      transitionBuilder: (c, a) =>
-                          FadeTransition(opacity: a, child: ScaleTransition(scale: a, child: c)),
+                      transitionBuilder: (c, a) => FadeTransition(
+                        opacity: a,
+                        child: ScaleTransition(scale: a, child: c),
+                      ),
                       child: Text(
                         current.name,
                         key: ValueKey(current.id),
@@ -164,8 +174,10 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                         const SizedBox(width: 12),
                         _QtyStepper(
                           qty: _qty,
-                          onDec: () => setState(() => _qty = (_qty > 1) ? _qty - 1 : 1),
-                          onInc: () => setState(() => _qty = (_qty < 99) ? _qty + 1 : 99),
+                          onDec: () =>
+                              setState(() => _qty = (_qty > 1) ? _qty - 1 : 1),
+                          onInc: () =>
+                              setState(() => _qty = (_qty < 99) ? _qty + 1 : 99),
                         ),
                         const SizedBox(width: 10),
                         _AddIconButton(
@@ -180,7 +192,7 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
           ),
         ),
 
-        // Nutrition panel on the RIGHT when detail is open
+        // 4) Nutrition panel on the RIGHT when detail is open
         Align(
           alignment: Alignment.centerRight,
           child: Padding(
@@ -191,6 +203,17 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
               onClose: () =>
                   ref.read(sweetsControllerProvider.notifier).closeDetail(),
             ),
+          ),
+        ),
+
+        // 5) Cart badge (TOPMOST so it receives taps)
+        Positioned(
+          top: 10,
+          right: 12,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _openCartSheet,
+            child: CartBadge(hostKey: _cartBadgeKey),
           ),
         ),
       ],
@@ -223,8 +246,7 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
             isActive: isActive,
             isDetailOpen: state.isDetailOpen,
             hostKey: isActive ? _activeImageKey : null,
-            onTap: () =>
-                ref.read(sweetsControllerProvider.notifier).toggleDetail(),
+            onTap: () => ref.read(sweetsControllerProvider.notifier).toggleDetail(),
           ),
         ),
       ),
@@ -236,7 +258,7 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
 
     final overlay = Overlay.maybeOf(context);
     await Haptics.light();
-    if (overlay == null) return;
+    if (overlay == null || !mounted) return;
 
     final start = _centerOfKey(_activeImageKey);
     final end = _centerOfKey(_cartBadgeKey);
@@ -257,7 +279,7 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
     final tweenY = Tween<double>(begin: start.dy, end: end.dy - 8);
     final sizeTween = Tween<double>(begin: 48, end: 16);
 
-    // Create a local entry reference to avoid cross-removal when multiple taps happen
+    // Create a local entry reference so we can check entry.mounted later
     final entry = OverlayEntry(builder: (ctx) {
       return AnimatedBuilder(
         animation: curve,
@@ -301,14 +323,22 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
 
     controller.addStatusListener((st) {
       if (st == AnimationStatus.completed || st == AnimationStatus.dismissed) {
-        // Remove the specific entry created for this animation
-        entry.remove();
+        // Only remove if still attached; prevents "overlay != null" assert
+        if (entry.mounted) {
+          try {
+            entry.remove();
+          } catch (_) {
+            // ignore
+          }
+        }
         if (identical(_flyEntry, entry)) {
           _flyEntry = null;
         }
         controller.dispose();
       }
     });
+
+    // If widget gets disposed early, controller will be disposed in the listener on dismiss
     controller.forward();
   }
 
@@ -372,9 +402,9 @@ class _QtyStepper extends StatelessWidget {
     return InkWell(
       borderRadius: BorderRadius.circular(24),
       onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.all(8.0),
-        child: Icon(icon, size: 22),
+      child: const Padding(
+        padding: EdgeInsets.all(8.0),
+        child: Icon(Icons.add, size: 22), // icon overridden by caller
       ),
     );
   }

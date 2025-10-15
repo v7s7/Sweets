@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/theme/app_theme.dart';
+import 'core/config/app_config.dart'; // <-- ensure this import exists
 import 'features/sweets/widgets/sweets_viewport.dart';
 
 class SweetsApp extends StatelessWidget {
@@ -20,14 +22,21 @@ class SweetsApp extends StatelessWidget {
   }
 }
 
-class _AppBarLogo extends StatelessWidget implements PreferredSizeWidget {
-  const _AppBarLogo();
+class _AppBarLogo extends ConsumerWidget implements PreferredSizeWidget {
+  const _AppBarLogo({super.key});
 
   @override
   Size get preferredSize => const Size.fromHeight(56);
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    // This will print on first build (and when config changes).
+    final cfg = ref.watch(appConfigProvider);
+    // Safe: just logs to the debug console
+    // Example: AppConfig(merchantId=..., branchId=..., apiBase=..., ...)
+    // ignore: avoid_print
+    print('AppConfig => $cfg');
+
     return AppBar(
       elevation: 0,
       scrolledUnderElevation: 0,
