@@ -1,0 +1,57 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{db}/documents {
+
+    function isSignedIn() { return request.auth != null; }
+    function isStaff(m, b) {
+      return request.auth != null &&
+             exists(/databases/$(db)/documents/merchants/$(m)/branches/$(b)/roles/$(request.auth.uid));
+    }
+
+    // Menu: public read; staff write
+    match /merchants/{m}/branches/{b}/menuItems/{prod} {
+      allow read: if true;
+      allow write: if isStaff(m, b);
+    }
+
+    // Roles: staff or self read; no client writes
+    match /merchants/{m}/branches/{b}/roles/{uid} {
+      allow read: if isStaff(m, b) || (isSignedIn() && request.auth.uid == uid);
+      allow write: if false;
+    }
+
+    // Orders: server-authoritative (Functions create), client reads guarded, staff updates status only
+    match /merchants/{m}/branches/{b}/orders/{orderId} {
+  allow create: if isSignedIn()
+    && request.resource.data.userId == request.auth.uid
+    && request.resource.data.status == "pending"
+    && request.resource.data.merchantId == m
+    && request.resource.data.branchId == b
+    && request.resource.data.items is list
+    && request.resource.data.items.size() >= 1
+    && request.resource.data.items.size() <= 20;
+      // Owner (creator) or staff can read
+      allow read: if isSignedIn()
+        && (resource.data.userId == request.auth.uid || isStaff(m, b));
+
+      // Staff may update ONLY `status`, and only step-by-step (or cancel)
+      allow update: if isStaff(m, b)
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly(["status"])
+        && (
+          (resource.data.status == "pending"   && (request.resource.data.status == "accepted"  || request.resource.data.status == "cancelled")) ||
+          (resource.data.status == "accepted"  && (request.resource.data.status == "preparing" || request.resource.data.status == "cancelled")) ||
+          (resource.data.status == "preparing" && (request.resource.data.status == "ready"     || request.resource.data.status == "cancelled")) ||
+          (resource.data.status == "ready"     && (request.resource.data.status == "served"    || request.resource.data.status == "cancelled"))
+        );
+
+      allow delete: if false;
+    }
+
+    // Counters (Functions write via Admin SDK)
+    match /counters/{id} {
+      allow read: if isSignedIn();
+      allow write: if false;
+      allow delete: if false;
+    }
+  }
+}

@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import 'core/theme/app_theme.dart';
-import 'core/config/app_config.dart'; // <-- ensure this import exists
+import 'core/config/app_config.dart';
 import 'features/sweets/widgets/sweets_viewport.dart';
 
 class SweetsApp extends StatelessWidget {
-  const SweetsApp({super.key});
+  const SweetsApp({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
@@ -13,29 +14,28 @@ class SweetsApp extends StatelessWidget {
       title: 'Sweets',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
-      home: const Scaffold(
-        backgroundColor: Color(0xFFF9EFF3),
-        appBar: _AppBarLogo(),
-        body: _GradientShell(child: SweetsViewport()),
+      home: Scaffold(
+        backgroundColor: const Color(0xFFF9EFF3),
+        appBar: const _AppBarLogo(),
+        body: _GradientShell(
+          child: SweetsViewport(), // leave non-const unless its ctor is const
+        ),
       ),
     );
   }
 }
 
 class _AppBarLogo extends ConsumerWidget implements PreferredSizeWidget {
-  const _AppBarLogo({super.key});
+  const _AppBarLogo({Key? key}) : super(key: key);
 
   @override
   Size get preferredSize => const Size.fromHeight(56);
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // This will print on first build (and when config changes).
     final cfg = ref.watch(appConfigProvider);
-    // Safe: just logs to the debug console
-    // Example: AppConfig(merchantId=..., branchId=..., apiBase=..., ...)
-    // ignore: avoid_print
-    print('AppConfig => $cfg');
+    // Helpful during development; won't spam in release.
+    debugPrint('AppConfig => $cfg');
 
     return AppBar(
       elevation: 0,
@@ -49,15 +49,16 @@ class _AppBarLogo extends ConsumerWidget implements PreferredSizeWidget {
 
 class _GradientShell extends StatelessWidget {
   final Widget child;
-  const _GradientShell({required this.child});
+  const _GradientShell({required this.child, Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     return Container(
       decoration: const BoxDecoration(
         gradient: LinearGradient(
-          begin: Alignment.topCenter, end: Alignment.bottomCenter,
-          colors: [ Color(0xFFF9EFF3), Color(0xFFFFF5F8) ],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFFF9EFF3), Color(0xFFFFF5F8)],
         ),
       ),
       child: SafeArea(top: false, child: child),

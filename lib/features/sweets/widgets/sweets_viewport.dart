@@ -404,7 +404,7 @@ class _QtyStepper extends StatelessWidget {
       onTap: onTap,
       child: const Padding(
         padding: EdgeInsets.all(8.0),
-        child: Icon(Icons.add, size: 22), // icon overridden by caller
+                child: Icon(Icons.add, size: 22), // icon overridden by caller
       ),
     );
   }

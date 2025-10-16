@@ -1,84 +1,217 @@
 import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'order_models.dart';
 
-/// In-memory stub used until we wire Cloud Functions in Step 7.
-/// createOrder() returns an Order and starts a timed stream of status updates.
-/// watchOrder() lets the UI observe those updates.
+// Use a prefix to avoid the name clash with Firestore's internal `Order` type.
+import 'order_models.dart' as om;
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+
+import '../../../core/config/app_config.dart';
+
+typedef Json = Map<String, dynamic>;
+
+/// Read Functions region from a build-time define. Defaults to me-central2.
+/// Pass like: --dart-define FUNCTIONS_REGION=me-central2
+const String _kFunctionsRegion =
+    String.fromEnvironment('FUNCTIONS_REGION', defaultValue: 'me-central2');
+
+const String _kCreateOrderFn = 'createOrder';
+
+/// OrderService:
+/// - createOrder(): calls Cloud Function (server-authoritative).
+/// - watchOrder(): live stream of the order doc in Firestore.
 class OrderService {
-  final Map<String, StreamController<Order>> _controllers = {};
-  final Map<String, Order> _orders = {};
+  OrderService(this._config)
+      : _functions = FirebaseFunctions.instanceFor(region: _kFunctionsRegion);
 
-  Future<Order> createOrder({
-    required List<OrderItem> items,
+  final AppConfig _config;
+  final FirebaseFirestore _fs = FirebaseFirestore.instance;
+  final FirebaseFunctions _functions;
+
+  /// Creates an order via Cloud Function (no client-side fallback).
+  ///
+  /// Server is authoritative over:
+  /// - Pricing (reads from menuItems)
+  /// - Subtotal (rounded to 3dp)
+  /// - Order number (sequential via counters doc)
+  /// - createdAt (serverTimestamp)
+  Future<om.Order> createOrder({
+    required List<om.OrderItem> items,
     String? table,
   }) async {
-    final subtotal = items.fold<double>(0, (a, it) => a + it.lineTotal);
-    final id = 'local_${DateTime.now().millisecondsSinceEpoch}';
-    final order = Order(
-      orderId: id,
-      orderNo: '#LOCAL',
-      status: OrderStatus.pending,
-      createdAt: DateTime.now(),
-      items: items,
-      subtotal: subtotal,
-      table: table,
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) {
+      throw StateError('Not signed in; anonymous auth must be initialized.');
+    }
+
+    try {
+      if (kDebugMode) {
+        debugPrint(
+          '[OrderService] Calling $_kCreateOrderFn in region=$_kFunctionsRegion '
+          'm=${_config.merchantId} b=${_config.branchId} items=${items.length}',
+        );
+      }
+
+      final callable = _functions.httpsCallable(_kCreateOrderFn);
+      final res = await callable.call(<String, dynamic>{
+        'merchantId': _config.merchantId,
+        'branchId': _config.branchId,
+        'items': items
+            .map((e) => <String, dynamic>{
+                  'productId': e.productId,
+                  'qty': e.qty,
+                })
+            .toList(),
+        'table': table,
+      });
+
+      // Defensive parsing (Functions can serialize numbers as int or double)
+      final Json data = _safeJson(res.data);
+
+      final String orderId = _asString(data['orderId']);
+      final String orderNo = _asString(data['orderNo'], fallback: '—');
+      final om.OrderStatus status =
+          _statusFromString(_asString(data['status'], fallback: 'pending'));
+      final double subtotal =
+          _asNum(data['subtotal']).toDouble(); // already 3dp from server
+
+      return om.Order(
+        orderId: orderId,
+        orderNo: orderNo,
+        status: status,
+        createdAt: DateTime.now(), // replaced by stream below
+        items: items, // UI will rehydrate from Firestore stream anyway
+        subtotal: subtotal,
+        table: table,
+      );
+    } on FirebaseFunctionsException catch (e, st) {
+      if (kDebugMode) {
+        debugPrint(
+            'createOrder(): FirebaseFunctionsException code=${e.code} message=${e.message}\n$st');
+      }
+      rethrow;
+    } catch (e, st) {
+      if (kDebugMode) {
+        debugPrint('createOrder(): Unexpected error: $e\n$st');
+      }
+      rethrow;
+    }
+  }
+
+  /// Live stream of the order doc in Firestore.
+  Stream<om.Order> watchOrder(String orderId) {
+    final docRef = _orderDoc(orderId);
+    return docRef.snapshots().where((s) => s.exists).map((snap) {
+      final data = snap.data()!;
+      final String statusStr = _asString(data['status'], fallback: 'pending');
+
+      final dynamic ts = data['createdAt'];
+      final DateTime createdAt =
+          ts is Timestamp ? ts.toDate() : DateTime.now();
+
+      final List<dynamic> rawItems = (data['items'] as List?) ?? const [];
+      final List<om.OrderItem> itemsList = rawItems
+          .whereType<Map>() // tighter than Object
+          .map((m) => _itemFromMap(_safeJson(m)))
+          .toList();
+
+      final double subtotalNum = (data['subtotal'] is num)
+          ? (data['subtotal'] as num).toDouble()
+          : itemsList.fold<double>(
+              0.0, (s, it) => s + (it.price * it.qty.toDouble()));
+
+      return om.Order(
+        orderId: snap.id,
+        orderNo: _asString(data['orderNo'], fallback: '—'),
+        status: _statusFromString(statusStr),
+        createdAt: createdAt,
+        items: itemsList,
+        subtotal: double.parse(subtotalNum.toStringAsFixed(3)),
+        table: _asNullableString(data['table']),
+      );
+    });
+  }
+
+  DocumentReference<Json> _orderDoc(String orderId) {
+    return _fs
+        .collection('merchants')
+        .doc(_config.merchantId)
+        .collection('branches')
+        .doc(_config.branchId)
+        .collection('orders')
+        .doc(orderId);
+  }
+
+  om.OrderStatus _statusFromString(String s) {
+    switch (s) {
+      case 'pending':
+        return om.OrderStatus.pending;
+      case 'accepted':
+        return om.OrderStatus.accepted;
+      case 'preparing':
+        return om.OrderStatus.preparing;
+      case 'ready':
+        return om.OrderStatus.ready;
+      case 'served':
+        return om.OrderStatus.served;
+      case 'cancelled':
+        return om.OrderStatus.cancelled;
+      default:
+        return om.OrderStatus.pending;
+    }
+  }
+
+  om.OrderItem _itemFromMap(Json m) {
+    return om.OrderItem(
+      productId: _asString(m['productId']),
+      name: _asString(m['name']),
+      price: _asNum(m['price']).toDouble(),
+      qty: _asNum(m['qty']).toInt(),
     );
-    _orders[id] = order;
-
-    // Create a stream and emit status progression
-    final ctrl = StreamController<Order>.broadcast();
-    _controllers[id] = ctrl;
-    ctrl.add(order);
-
-    // Fake timeline: PENDING -> ACCEPTED -> PREPARING -> READY -> (leave READY)
-    Future<void>.delayed(const Duration(seconds: 1), () {
-      _emit(id, OrderStatus.accepted);
-    });
-    Future<void>.delayed(const Duration(seconds: 3), () {
-      _emit(id, OrderStatus.preparing);
-    });
-    Future<void>.delayed(const Duration(seconds: 6), () {
-      _emit(id, OrderStatus.ready);
-    });
-
-    return order;
   }
 
-  Stream<Order> watchOrder(String orderId) {
-    final ctrl = _controllers[orderId];
-    if (ctrl != null) return ctrl.stream;
-    // If not found (e.g., app restarted), return a completed stream.
-    final o = _orders[orderId];
-    if (o != null) {
-      final sc = StreamController<Order>();
-      sc.add(o);
-      sc.close();
-      return sc.stream;
+  // --------------------------- helpers: parsing ---------------------------
+
+  static Json _safeJson(Object? o) {
+    if (o is Map<String, dynamic>) {
+      return o;
     }
-    // Empty stream
-    return const Stream.empty();
-  }
-
-  void _emit(String id, OrderStatus status) {
-    final current = _orders[id];
-    final ctrl = _controllers[id];
-    if (current == null || ctrl == null || ctrl.isClosed) return;
-    final next = current.copyWith(status: status);
-    _orders[id] = next;
-    ctrl.add(next);
-  }
-
-  void dispose() {
-    for (final c in _controllers.values) {
-      c.close();
+    if (o is Map) {
+      // No cast needed; we're already inside the `o is Map` branch.
+      return Map<String, dynamic>.from(o);
     }
-    _controllers.clear();
+    throw StateError('Expected Map, got $o');
+  }
+
+  static String _asString(Object? v, {String fallback = ''}) {
+    if (v == null) return fallback;
+    if (v is String) return v;
+    return v.toString();
+  }
+
+  static String? _asNullableString(Object? v) {
+    if (v == null) return null;
+    if (v is String) return v;
+    return v.toString();
+  }
+
+  static num _asNum(Object? v, {num fallback = 0}) {
+    if (v == null) return fallback;
+    if (v is num) return v;
+    if (v is String) {
+      final parsed = num.tryParse(v);
+      return parsed ?? fallback;
+    }
+    return fallback;
   }
 }
 
+/// Riverpod provider wiring AppConfig into OrderService.
 final orderServiceProvider = Provider<OrderService>((ref) {
-  final svc = OrderService();
-  ref.onDispose(svc.dispose);
-  return svc;
+  final cfg = ref.watch(appConfigProvider);
+  return OrderService(cfg);
 });
