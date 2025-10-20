@@ -1,57 +1,93 @@
 rules_version = '2';
 service cloud.firestore {
-  match /databases/{db}/documents {
+  match /databases/{database}/documents {
 
-    function isSignedIn() { return request.auth != null; }
+    /* ------------------------------- Helpers ------------------------------- */
+    function isAuthed() { return request.auth != null; }
+
+    // Staff = a roles doc exists for this user under the same branch
     function isStaff(m, b) {
-      return request.auth != null &&
-             exists(/databases/$(db)/documents/merchants/$(m)/branches/$(b)/roles/$(request.auth.uid));
+      return isAuthed() &&
+        exists(/databases/$(database)/documents/merchants/$(m)/branches/$(b)/roles/$(request.auth.uid));
     }
 
-    // Menu: public read; staff write
-    match /merchants/{m}/branches/{b}/menuItems/{prod} {
-      allow read: if true;
-      allow write: if isStaff(m, b);
+    /* --------------------------- Slug resolution --------------------------- */
+    match /slugs/{slug} {
+      allow read: if true;     // Public: used to resolve /s/<slug> -> {merchantId, branchId}
+      allow write: if false;   // Only set from server/console
     }
 
-    // Roles: staff or self read; no client writes
+    /* --------------------------- Branch config ----------------------------- */
+    // merchants/{m}/branches/{b}/config/branding   (public branding doc)
+    match /merchants/{m}/branches/{b}/config/{doc} {
+      allow read: if true;                  // Public can read branding/theme
+      allow create, update, delete: if isStaff(m, b);
+    }
+
+    /* -------------------------------- Roles -------------------------------- */
     match /merchants/{m}/branches/{b}/roles/{uid} {
-      allow read: if isStaff(m, b) || (isSignedIn() && request.auth.uid == uid);
-      allow write: if false;
+      // User can read their own role, or any staff can read
+      allow read: if (isAuthed() && request.auth.uid == uid) || isStaff(m, b);
+      allow write: if false; // server/admin managed only
     }
 
-    // Orders: server-authoritative (Functions create), client reads guarded, staff updates status only
+    /* ------------------------------ Menu items ----------------------------- */
+    // UI queries with .where('isActive', true). Rule returns only docs where isActive==true anyway.
+    match /merchants/{m}/branches/{b}/menuItems/{item} {
+  // Public can read active items; staff can read everything.
+  allow get, list: if isStaff(m, b) || resource.data.isActive == true;      allow create, update, delete: if isStaff(m, b);
+    }
+
+    /* -------------------------------- Orders -------------------------------- */
     match /merchants/{m}/branches/{b}/orders/{orderId} {
-  allow create: if isSignedIn()
-    && request.resource.data.userId == request.auth.uid
-    && request.resource.data.status == "pending"
-    && request.resource.data.merchantId == m
-    && request.resource.data.branchId == b
-    && request.resource.data.items is list
-    && request.resource.data.items.size() >= 1
-    && request.resource.data.items.size() <= 20;
-      // Owner (creator) or staff can read
-      allow read: if isSignedIn()
-        && (resource.data.userId == request.auth.uid || isStaff(m, b));
 
-      // Staff may update ONLY `status`, and only step-by-step (or cancel)
+      // Staff can read all orders; users can read their own order
+      allow get, list: if isStaff(m, b) ||
+        (isAuthed() && resource.data.userId == request.auth.uid);
+
+      // Create by authed user; structural validation of items
+      allow create: if isAuthed()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.merchantId == m
+        && request.resource.data.branchId == b
+        && request.resource.data.status == 'pending'
+        && request.resource.data.items is list
+        && request.resource.data.items.size() >= 1
+        && request.resource.data.items.size() <= 50
+        && request.resource.data.items.all(it,
+             it is map
+             && it.keys().hasAll(['productId','name','price','qty'])
+             && it.productId is string
+             && it.name is string
+             && it.price is number
+             && it.qty is number
+             && it.qty >= 1 && it.qty <= 99
+           )
+        && request.resource.data.subtotal is number;
+
+      // Only staff can move status; allow changing ONLY 'status' key; enforce linear flow
       allow update: if isStaff(m, b)
-        && request.resource.data.diff(resource.data).changedKeys().hasOnly(["status"])
-        && (
-          (resource.data.status == "pending"   && (request.resource.data.status == "accepted"  || request.resource.data.status == "cancelled")) ||
-          (resource.data.status == "accepted"  && (request.resource.data.status == "preparing" || request.resource.data.status == "cancelled")) ||
-          (resource.data.status == "preparing" && (request.resource.data.status == "ready"     || request.resource.data.status == "cancelled")) ||
-          (resource.data.status == "ready"     && (request.resource.data.status == "served"    || request.resource.data.status == "cancelled"))
-        );
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly(['status'])
+        && isValidTransition(resource.data.status, request.resource.data.status);
 
       allow delete: if false;
     }
 
-    // Counters (Functions write via Admin SDK)
-    match /counters/{id} {
-      allow read: if isSignedIn();
+    /* ------------------------------- Members -------------------------------- */
+    match /members/{uid} {
+      allow read: if isAuthed() && request.auth.uid == uid;
       allow write: if false;
-      allow delete: if false;
+    }
+
+    /* ---------------------- Order status transition check ------------------- */
+    function isValidTransition(from, to) {
+      return
+        (from == 'pending'   && (to == 'accepted'  || to == 'cancelled')) ||
+        (from == 'accepted'  && (to == 'preparing' || to == 'cancelled')) ||
+        (from == 'preparing' && (to == 'ready'     || to == 'cancelled')) ||
+        (from == 'ready'     && (to == 'served'    || to == 'cancelled')) ||
+        (from == 'served'    && false) ||
+        (from == 'cancelled' && false);
     }
   }
 }

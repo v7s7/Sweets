@@ -34,13 +34,40 @@ class NutritionPanel extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _pill(context, title: 'Protein', value: '${_fmt(sweet.protein)} g', percent: 8),
+                  _pill(
+                    context,
+                    title: 'Protein',
+                    value: '${_fmtNum(sweet.protein)} g',
+                    percent: 8,
+                  ),
                   const SizedBox(height: 12),
-                  _pill(context, title: 'Carbs',   value: '${_fmt(sweet.carbs)} g',   percent: 12),
+                  _pill(
+                    context,
+                    title: 'Carbs',
+                    value: '${_fmtNum(sweet.carbs)} g',
+                    percent: 12,
+                  ),
                   const SizedBox(height: 12),
-                  _pill(context, title: 'Fat',     value: '${_fmt(sweet.fat)} g',     percent: 12),
+                  _pill(
+                    context,
+                    title: 'Fat',
+                    value: '${_fmtNum(sweet.fat)} g',
+                    percent: 12,
+                  ),
                   const SizedBox(height: 12),
-                  _pill(context, title: 'Energy',  value: '${sweet.calories} kcal',   percent: 40),
+                  _pill(
+                    context,
+                    title: 'Sugar',
+                    value: '${_fmtNum(sweet.sugar)} g',
+                    percent: 12,
+                  ),
+                  const SizedBox(height: 12),
+                  _pill(
+                    context,
+                    title: 'Energy',
+                    value: '${_fmtNum(sweet.calories)} kcal',
+                    percent: 40,
+                  ),
                   const SizedBox(height: 8),
                   IconButton(onPressed: onClose, icon: const Icon(Icons.close_rounded)),
                 ],
@@ -60,7 +87,7 @@ class NutritionPanel extends StatelessWidget {
         color: Colors.white.withOpacity(0.85),
         borderRadius: BorderRadius.circular(20),
         boxShadow: const [
-          BoxShadow(color: Color(0x16000000), blurRadius: 14, offset: Offset(0, 8))
+          BoxShadow(color: Color(0x16000000), blurRadius: 14, offset: Offset(0, 8)),
         ],
         border: Border.all(color: const Color(0x10A0A0A0)),
       ),
@@ -82,10 +109,20 @@ class NutritionPanel extends StatelessWidget {
         color: const Color(0xFF111111),
         borderRadius: BorderRadius.circular(14),
       ),
-      child: Text('$p%',
-          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+      child: Text(
+        '$p%',
+        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+      ),
     );
   }
+}
 
-  String _fmt(double v) => v.toStringAsFixed(v.truncateToDouble() == v ? 0 : 1);
+/// Formats nullable numbers for display:
+/// - `null` → "0"
+/// - integers → no decimals
+/// - non-integers → 1 decimal
+String _fmtNum(num? v) {
+  final n = v ?? 0;
+  final isWhole = (n == n.roundToDouble());
+  return isWhole ? n.toStringAsFixed(0) : n.toStringAsFixed(1);
 }

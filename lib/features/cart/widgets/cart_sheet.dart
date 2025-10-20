@@ -12,7 +12,7 @@ import '../../orders/screens/order_status_page.dart';
 import '../../../core/config/app_config.dart';
 
 class CartSheet extends ConsumerWidget {
-  final VoidCallback? onConfirm; // optional callback for when confirm is tapped
+  final VoidCallback? onConfirm;
 
   const CartSheet({super.key, this.onConfirm});
 
@@ -123,7 +123,6 @@ class CartSheet extends ConsumerWidget {
                 onPressed: lines.isEmpty
                     ? null
                     : () async {
-                        // Build order items
                         final items = lines
                             .map((l) => OrderItem(
                                   productId: l.sweet.id,
@@ -133,22 +132,17 @@ class CartSheet extends ConsumerWidget {
                                 ))
                             .toList();
 
-                        // Read table from QR (optional for now)
                         final cfg = ref.read(appConfigProvider);
                         final table = cfg.qr.table;
 
-                        // Create order via stub service
                         final service = ref.read(orderServiceProvider);
                         final order = await service.createOrder(
                           items: items,
                           table: table,
                         );
 
-                        // Close the sheet
                         // ignore: use_build_context_synchronously
                         Navigator.of(context).maybePop();
-
-                        // Navigate to status page
                         // ignore: use_build_context_synchronously
                         Navigator.of(context).push(
                           MaterialPageRoute(
@@ -193,6 +187,9 @@ class _CartRow extends ConsumerWidget {
     final cart = ref.watch(cartControllerProvider);
     final qty = cart.qtyFor(line.sweet.id);
 
+    // Image path/URL (null-safe + decode any % encodings)
+    final img = _cleanSrc(line.sweet.imageAsset);
+
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
@@ -202,9 +199,7 @@ class _CartRow extends ConsumerWidget {
             color: const Color(0xFFF3F3F3),
             width: 56,
             height: 56,
-            child: (line.sweet.imageAsset.isEmpty)
-                ? const Icon(Icons.image_not_supported_outlined)
-                : Image.asset(line.sweet.imageAsset, fit: BoxFit.cover),
+            child: _thumb(img),
           ),
         ),
         const SizedBox(width: 12),
@@ -236,6 +231,61 @@ class _CartRow extends ConsumerWidget {
               ref.read(cartControllerProvider.notifier).remove(line.sweet.id),
         ),
       ],
+    );
+  }
+
+  static String _cleanSrc(String? src) {
+    var s = (src ?? '').trim();
+    for (var i = 0; i < 3; i++) {
+      final before = s;
+      try {
+        s = Uri.decodeFull(s);
+      } catch (_) {
+        try {
+          s = Uri.decodeComponent(s);
+        } catch (_) {
+          // stop if decoding fails
+        }
+      }
+      if (s == before) break;
+    }
+    return s;
+  }
+
+  bool _looksLikeNetwork(String s) {
+    final lower = s.toLowerCase();
+    return lower.startsWith('http://') ||
+        lower.startsWith('https://') ||
+        lower.startsWith('//') ||
+        lower.startsWith('data:');
+  }
+
+  /// Small 56x56 thumbnail that supports either assets or full URLs.
+  Widget _thumb(String src) {
+    if (src.isEmpty) {
+      return const Icon(Icons.image_not_supported_outlined, color: Colors.black26);
+    }
+
+    if (_looksLikeNetwork(src)) {
+      return Image.network(
+        src,
+        fit: BoxFit.cover,
+        filterQuality: FilterQuality.medium,
+        gaplessPlayback: true,
+        errorBuilder: (_, __, ___) =>
+            const Icon(Icons.broken_image_outlined, color: Colors.black26),
+        loadingBuilder: (c, child, progress) =>
+            progress == null ? child : const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      );
+    }
+
+    return Image.asset(
+      src,
+      fit: BoxFit.cover,
+      filterQuality: FilterQuality.medium,
+      gaplessPlayback: true,
+      errorBuilder: (_, __, ___) =>
+          const Icon(Icons.broken_image_outlined, color: Colors.black26),
     );
   }
 }

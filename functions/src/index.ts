@@ -11,8 +11,7 @@ import { setGlobalOptions } from "firebase-functions/v2/options";
 import * as logger from "firebase-functions/logger";
 
 /**
- * Keep your Functions region here. Dammam/Gulf → me-central2.
- * (Emulator ignores region, but production and the client SDK will use it.)
+ * Default region (Gulf): me-central2
  */
 const REGION = "me-central2";
 setGlobalOptions({
@@ -25,9 +24,19 @@ setGlobalOptions({
 admin.initializeApp();
 const db = admin.firestore();
 
-/* ----------------------------- Types & helpers ----------------------------- */
+/* -------------------------------------------------------------------------- */
+/*                               Shared helpers                               */
+/* -------------------------------------------------------------------------- */
+
+const CORS_ORIGINS = [
+  /^https?:\/\/localhost(:\d+)?$/,
+  /^https?:\/\/127\.0\.0\.1(:\d+)?$/,
+  /\.web\.app$/,
+  /\.firebaseapp\.com$/,
+];
 
 type OrderItemIn = { productId: string; qty: number };
+
 type CreateOrderPayload = {
   merchantId: string;
   branchId: string;
@@ -67,13 +76,112 @@ async function isStaff(uid: string, m: string, b: string): Promise<boolean> {
   return roleDoc.exists;
 }
 
-/* -------------------------------- createOrder ------------------------------- */
-/** CORS enabled to allow localhost & hosted web origins. */
+/* -------------------------------------------------------------------------- */
+/*                              Slug reservations                             */
+/* -------------------------------------------------------------------------- */
+
+type SetBranchSlugPayload = {
+  merchantId: string;
+  branchId: string;
+  slug: string;
+};
+
+function normalizeSlug(s: string): string {
+  const trimmed = (s || "").toLowerCase().trim();
+  const norm = trimmed
+    .replace(/[^a-z0-9-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  if (norm.length < 3 || norm.length > 32) {
+    throw new HttpsError("invalid-argument", "Slug must be 3–32 characters.");
+  }
+  const reserved = new Set([
+    "admin", "api", "app", "assets", "s", "m", "b",
+    "login", "signup", "merchant", "console",
+  ]);
+  if (reserved.has(norm)) {
+    throw new HttpsError("failed-precondition", "Slug is reserved.");
+  }
+  return norm;
+}
+
+/**
+ * Reserve or update a branch's public slug.
+ * - Enforces uniqueness in /slugs/{slug}
+ * - Ensures caller is staff under that branch
+ * - Stores slug at branding doc: merchants/{m}/branches/{b}/config/branding.shareSlug
+ * - Frees previous slug (if any)
+ */
+export const setBranchSlug = onCall(
+  {
+    cors: CORS_ORIGINS,
+    // appCheck: true, // enable after you wire App Check in the client
+  },
+  async (request: CallableRequest<SetBranchSlugPayload>) => {
+    try {
+      if (!request.auth) {
+        throw new HttpsError("unauthenticated", "Sign in required.");
+      }
+      const { merchantId, branchId, slug } = (request.data || {}) as SetBranchSlugPayload;
+      if (!merchantId || !branchId || !slug) {
+        throw new HttpsError("invalid-argument", "Missing merchantId, branchId, or slug.");
+      }
+
+      const uid = request.auth.uid!;
+      if (!(await isStaff(uid, merchantId, branchId))) {
+        throw new HttpsError("permission-denied", "Staff only.");
+      }
+
+      const norm = normalizeSlug(slug);
+
+      await db.runTransaction(async (tx) => {
+        const slugRef = db.doc(`slugs/${norm}`);
+        const slugSnap = await tx.get(slugRef);
+        if (slugSnap.exists) {
+          throw new HttpsError("already-exists", "Slug already taken.");
+        }
+
+        const brandingRef = db.doc(`merchants/${merchantId}/branches/${branchId}/config/branding`);
+        const brandingSnap = await tx.get(brandingRef);
+        const prevSlug: string | undefined = brandingSnap.exists ? brandingSnap.get("shareSlug") : undefined;
+
+        if (prevSlug && prevSlug !== norm) {
+          tx.delete(db.doc(`slugs/${prevSlug}`));
+        }
+
+        tx.set(slugRef, {
+          merchantId,
+          branchId,
+          active: true,
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+
+        tx.set(brandingRef, { shareSlug: norm }, { merge: true });
+      });
+
+      logger.info("[setBranchSlug] reserved", { merchantId, branchId, slug: slug.toLowerCase() });
+      return { slug: slug.toLowerCase() };
+    } catch (err: any) {
+      logger.error("[setBranchSlug] error", {
+        code: err?.code ?? "unknown",
+        message: err?.message ?? String(err),
+        stack: err?.stack ?? null,
+      });
+      if (err instanceof HttpsError) throw err;
+      throw new HttpsError("internal", "Unexpected error in setBranchSlug.");
+    }
+  }
+);
+
+/* -------------------------------------------------------------------------- */
+/*                                createOrder                                 */
+/* -------------------------------------------------------------------------- */
+
+/** Callable + CORS so the Flutter Web app can call from localhost or Hosting. */
 export const createOrder = onCall(
   {
-    // Simplest: allow all during development. Tighten later if desired:
-    // cors: [/^http:\/\/localhost(:\d+)?$/, /\.web\.app$/, /\.firebaseapp\.com$/]
-    cors: true,
+    cors: CORS_ORIGINS,
+    // appCheck: true, // enable later to enforce App Check
   },
   async (request: CallableRequest<CreateOrderPayload>) => {
     const t0 = Date.now();
@@ -88,7 +196,7 @@ export const createOrder = onCall(
       if (!merchantId || !branchId || !Array.isArray(items) || items.length === 0) {
         throw new HttpsError(
           "invalid-argument",
-          "Missing merchantId, branchId, or items."
+          "Missing merchantId, branchId, or items.",
         );
       }
 
@@ -101,7 +209,7 @@ export const createOrder = onCall(
         region: REGION,
       });
 
-      // Build menu price index
+      // Build menu price index from subcollection `menuItems`
       const menuSnap = await db
         .collection(`merchants/${merchantId}/branches/${branchId}/menuItems`)
         .get();
@@ -153,7 +261,7 @@ export const createOrder = onCall(
 
       // Create order doc
       const ordersCol = db.collection(
-        `merchants/${merchantId}/branches/${branchId}/orders`
+        `merchants/${merchantId}/branches/${branchId}/orders`,
       );
       const ref = ordersCol.doc();
       await ref.set({
@@ -163,7 +271,7 @@ export const createOrder = onCall(
         subtotal,
         userId: request.auth.uid,
         table: table ?? null,
-        createdAt: FieldValue.serverTimestamp(), // modular FieldValue
+        createdAt: FieldValue.serverTimestamp(),
         merchantId,
         branchId,
       });
@@ -188,14 +296,18 @@ export const createOrder = onCall(
       if (err instanceof HttpsError) throw err;
       throw new HttpsError("internal", "Unexpected error in createOrder.");
     }
-  }
+  },
 );
 
-/* ----------------------------- updateOrderStatus ---------------------------- */
-/** CORS enabled here as well. */
+/* -------------------------------------------------------------------------- */
+/*                             updateOrderStatus                               */
+/* -------------------------------------------------------------------------- */
+
+/** Callable + CORS as above. */
 export const updateOrderStatus = onCall(
   {
-    cors: true,
+    cors: CORS_ORIGINS,
+    // appCheck: true, // enable later to enforce App Check
   },
   async (request: CallableRequest<UpdateStatusPayload>) => {
     try {
@@ -219,7 +331,7 @@ export const updateOrderStatus = onCall(
       }
 
       const ref = db.doc(
-        `merchants/${merchantId}/branches/${branchId}/orders/${orderId}`
+        `merchants/${merchantId}/branches/${branchId}/orders/${orderId}`,
       );
 
       await db.runTransaction(async (tx) => {
@@ -231,7 +343,7 @@ export const updateOrderStatus = onCall(
         if (!isAllowedTransition(current, nextStatus)) {
           throw new HttpsError(
             "failed-precondition",
-            `Illegal transition ${current} -> ${nextStatus}`
+            `Illegal transition ${current} -> ${nextStatus}`,
           );
         }
         tx.update(ref, { status: nextStatus });
@@ -255,5 +367,5 @@ export const updateOrderStatus = onCall(
       if (err instanceof HttpsError) throw err;
       throw new HttpsError("internal", "Unexpected error in updateOrderStatus.");
     }
-  }
+  },
 );

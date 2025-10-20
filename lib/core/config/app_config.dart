@@ -1,111 +1,180 @@
-import 'package:flutter/foundation.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+// lib/core/config/app_config.dart
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter_riverpod/flutter_riverpod.dart' as rp;
 
-/// Feature flags you can toggle via --dart-define (all optional).
+/// Simple feature flags you can toggle via URL, e.g. ?hm=1&geo=0
 class FeatureFlags {
   final bool healthyMode;
   final bool requireGeofence;
-
   const FeatureFlags({
     this.healthyMode = false,
     this.requireGeofence = false,
   });
-
-  static bool _toBool(String s) =>
-      s.toLowerCase() == 'true' || s == '1' || s.toLowerCase() == 'yes';
-
-  factory FeatureFlags.fromEnv() {
-    const ffHealthy = String.fromEnvironment('FF_HEALTHY', defaultValue: 'false');
-    const ffGeofence = String.fromEnvironment('FF_GEOFENCE', defaultValue: 'false');
-    return FeatureFlags(
-      healthyMode: _toBool(ffHealthy),
-      requireGeofence: _toBool(ffGeofence),
-    );
-  }
 
   @override
   String toString() =>
       'FeatureFlags(healthyMode=$healthyMode, requireGeofence=$requireGeofence)';
 }
 
-/// Parsed QR/table context. These will be verified server-side later.
+/// Optional QR context carried in the URL (not required for now).
 class QrContext {
-  final String? table; // e.g. A12
-  final int? exp;      // epoch seconds
-  final String? sig;   // HMAC signature
-
+  final String? table;
+  final int? exp;
+  final String? sig;
   const QrContext({this.table, this.exp, this.sig});
 
-  factory QrContext.fromUri(Uri uri) {
-    final qp = uri.queryParameters;
-    int? _toInt(String? s) => s == null ? null : int.tryParse(s);
-    // Only use query params now; (m,b) also arrive here for convenience.
-    return QrContext(
-      table: qp['t'],
-      exp: _toInt(qp['exp']),
-      sig: qp['sig'],
-    );
-  }
-
   @override
-  String toString() => 'QrContext(table=$table, exp=$exp, sig=${sig != null ? "<redacted>" : null})';
+  String toString() => 'QrContext(table=$table, exp=$exp, sig=$sig)';
 }
 
-/// Global app config: merchant/branch identifiers, API base, flags, and QR context.
-/// This only *parses* config; no network calls and no behavior change yet.
+/// App-wide config parsed from the URL (on web) or defaults (elsewhere).
+///
+/// Supports either:
+///   • Query IDs:           ?m=<merchantId>&b=<branchId>
+///   • Pretty slug routes:  /s/<slug>   or   #/s/<slug>
+///   • Slug query alias:    ?s=<slug>   or   ?slug=<slug>
+///
+/// How to use a slug:
+///   1) Put a human-friendly slug in the URL (e.g. https://your.app/#/s/donuts-budaiya)
+///   2) Store a mapping doc in Firestore: /slugs/{slug} => { merchantId, branchId }
+///   3) Resolve that doc at startup and wire the IDs into your providers.
 class AppConfig {
-  final String merchantId;
-  final String branchId;
-  final String apiBase;
+  /// Explicit IDs from URL (highest priority if present)
+  final String? merchantId; // ?m= | ?merchant | ?merchantId
+  final String? branchId;   // ?b= | ?branch  | ?branchId
+
+  /// Human-friendly slug (e.g. "my-cafe"); resolve to IDs via Firestore /slugs/{slug}
+  final String? slug;       // /s/<slug> | ?s= | ?slug=
+
+  /// Optional API base path
+  final String apiBase;     // ?api= (optional; default /api)
+
+  /// Feature flags & QR context
   final FeatureFlags flags;
   final QrContext qr;
 
   const AppConfig({
     required this.merchantId,
     required this.branchId,
-    required this.apiBase,
-    required this.flags,
-    required this.qr,
+    this.slug,
+    this.apiBase = '/api',
+    this.flags = const FeatureFlags(),
+    this.qr = const QrContext(),
   });
 
-  /// Load config by combining:
-  /// - --dart-define MERCHANT_ID / BRANCH_ID / API_BASE (preferred)
-  /// - Web query params ?m=&b=&t=&exp=&sig= (useful during dev)
-  factory AppConfig.load() {
-    const envM = String.fromEnvironment('MERCHANT_ID', defaultValue: '');
-    const envB = String.fromEnvironment('BRANCH_ID', defaultValue: '');
-    const envApi = String.fromEnvironment('API_BASE', defaultValue: '');
+  /// Convenience: true if both IDs are present.
+  bool get hasIds => merchantId != null && branchId != null;
 
-    // Defaults keep the app running without server wiring.
-    String m = envM.isEmpty ? 'demo_merchant' : envM;
-    String b = envB.isEmpty ? 'demo_branch' : envB;
-    String api = envApi.isEmpty ? '/api' : envApi;
+  /// Build from the current URL. Accepted aliases:
+  /// m|merchant|merchantId, b|branch|branchId, t|table, s|slug
+  ///
+  /// Also parses the hash part on web (e.g. `#/s/<slug>?hm=1`)
+  /// so you can share links like `https://your.app/#/s/donuts-budaiya`.
+  factory AppConfig.fromUrl(Uri uri) {
+    // Real query (location.search)
+    final qp = uri.queryParameters;
 
-    var qr = const QrContext();
+    // Hash-based router support on web: parse the fragment as a mini-URI
+    final fragUri = _parseFragmentAsUri(uri.fragment);
+    final fqp = fragUri?.queryParameters ?? const <String, String>{};
 
-    if (kIsWeb) {
-      final uri = Uri.base;
-      final qp = uri.queryParameters;
-      // Allow overriding via URL for quick testing: ?m=<id>&b=<id>
-      m = qp['m'] ?? m;
-      b = qp['b'] ?? b;
-      qr = QrContext.fromUri(uri);
+    String? pick(List<String> keys) {
+      for (final k in keys) {
+        final v = qp[k] ?? fqp[k];
+        if (v != null && v.isNotEmpty) return v;
+      }
+      return null;
     }
 
+    bool asBool(String? v) {
+      if (v == null) return false;
+      final s = v.toLowerCase();
+      return s == '1' || s == 'true' || s == 'yes' || s == 'y';
+    }
+
+    // Explicit IDs
+    final m = pick(['m', 'merchant', 'merchantId']);
+    final b = pick(['b', 'branch', 'branchId']);
+
+    // API base
+    final api = pick(['api']) ?? '/api';
+
+    // QR context
+    final table = pick(['t', 'table']);
+    final exp = int.tryParse(pick(['exp']) ?? '');
+    final sig = pick(['sig']);
+
+    // Flags
+    final hm = asBool(pick(['hm', 'healthy']));
+    final geo = asBool(pick(['geo', 'requireGeofence']));
+
+    // Slug from query OR from path(/fragment) /s/<slug>
+    final slugFromQuery = pick(['s', 'slug']);
+    final slugFromFragPath =
+        _extractSlugFromPath(fragUri?.pathSegments ?? const []);
+    final slugFromMainPath = _extractSlugFromPath(uri.pathSegments);
+    final slug = _firstNonEmpty([slugFromQuery, slugFromFragPath, slugFromMainPath]);
+
     return AppConfig(
-      merchantId: m,
-      branchId: b,
+      merchantId: m?.trim(),
+      branchId: b?.trim(),
+      slug: slug?.trim(),
       apiBase: api,
-      flags: FeatureFlags.fromEnv(),
-      qr: qr,
+      flags: FeatureFlags(healthyMode: hm, requireGeofence: geo),
+      qr: QrContext(table: table, exp: exp, sig: sig),
     );
   }
 
   @override
   String toString() =>
-      'AppConfig(merchantId=$merchantId, branchId=$branchId, apiBase=$apiBase, flags=$flags, qr=$qr)';
+      'AppConfig(merchantId=$merchantId, branchId=$branchId, slug=$slug, '
+      'apiBase=$apiBase, flags=$flags, qr=$qr)';
+
+  /* ------------------------------- helpers -------------------------------- */
+
+  static Uri? _parseFragmentAsUri(String fragment) {
+    if (!kIsWeb) return null;
+    if (fragment.isEmpty) return null;
+    // Normalize: '#/s/x?y=1' -> '/s/x?y=1'
+    final text = fragment.startsWith('/') ? fragment : '/$fragment';
+    try {
+      return Uri.parse(text);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Accepts paths like:
+  ///   /s/<slug>
+  ///   /app/s/<slug>
+  ///   /<slug>           (fallback: single segment)
+  static String? _extractSlugFromPath(List<String> segs) {
+    if (segs.isEmpty) return null;
+    // Prefer '/s/<slug>' shape anywhere in the path
+    final i = segs.indexOf('s');
+    if (i >= 0 && i + 1 < segs.length) {
+      final candidate = segs[i + 1].trim();
+      return candidate.isEmpty ? null : candidate;
+    }
+    // Fallback: single-segment path -> treat as slug
+    if (segs.length == 1) {
+      final solo = segs.first.trim();
+      if (solo.isNotEmpty) return solo;
+    }
+    return null;
+  }
+
+  static String? _firstNonEmpty(List<String?> vals) {
+    for (final v in vals) {
+      if (v != null && v.trim().isNotEmpty) return v.trim();
+    }
+    return null;
+  }
 }
 
-/// Riverpod providers you can read anywhere.
-final appConfigProvider = Provider<AppConfig>((ref) => AppConfig.load());
-final qrContextProvider = Provider<QrContext>((ref) => ref.watch(appConfigProvider).qr);
+/// Riverpod provider exposed app-wide.
+/// On web, reads from the current URL (?m=&b=&... or #/s/<slug>); elsewhere returns defaults.
+final appConfigProvider = rp.Provider<AppConfig>((ref) {
+  final uri = kIsWeb ? Uri.base : Uri();
+  return AppConfig.fromUrl(uri);
+});

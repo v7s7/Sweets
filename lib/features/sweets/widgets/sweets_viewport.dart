@@ -56,7 +56,7 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
       if (sweets.isNotEmpty) {
         ref
             .read(sweetsControllerProvider.notifier)
-            .setIndex(_kInitialPage % sweets.length);
+            .setIndex((_kInitialPage % sweets.length).toInt());
       }
     });
   }
@@ -74,9 +74,9 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
   @override
   Widget build(BuildContext context) {
     final sweets = ref.watch(sweetsRepoProvider);
-    if (sweets.isEmpty) {
-      return const SizedBox.shrink();
-    }
+   if (sweets.isEmpty) {
+  return const Center(child: Text('No products yet.'));
+}
 
     final state = ref.watch(sweetsControllerProvider);
     final current = sweets[state.index % sweets.length];
@@ -84,7 +84,7 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
     // total is unit price * qty; shown in pink next to the counter
     final total = (current.price * _qty);
     final size = MediaQuery.of(context).size;
-    final pink = Theme.of(context).colorScheme.primary; // #FF6FA3 from theme
+    final pink = Theme.of(context).colorScheme.primary;
 
     return Stack(
       clipBehavior: Clip.none,
@@ -99,7 +99,7 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
               ? const NeverScrollableScrollPhysics()
               : const BouncingScrollPhysics(),
           onPageChanged: (i) {
-            ref.read(sweetsControllerProvider.notifier).setIndex(i % sweets.length);
+            ref.read(sweetsControllerProvider.notifier).setIndex((i % sweets.length).toInt());
             setState(() => _qty = 1);
           },
           itemBuilder: (ctx, i) {
@@ -130,9 +130,9 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
 
         // 3) Name, pink price (total), counter, and add button — right under the hero
         Align(
-          alignment: const Alignment(0, 0.78), // near bottom of hero
+          alignment: const Alignment(0, 0.78),
           child: IgnorePointer(
-            ignoring: state.isDetailOpen, // hide while detail is open
+            ignoring: state.isDetailOpen,
             child: AnimatedOpacity(
               opacity: state.isDetailOpen ? 0 : 1,
               duration: const Duration(milliseconds: 180),
@@ -242,7 +242,9 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
         child: Transform.rotate(
           angle: rot,
           child: SweetImage(
-            imageAsset: sweet.imageAsset,
+            // `SweetImage` expects a non-null String; demo data provides assets.
+            // If you later support network images inside SweetImage, pass both.
+            imageAsset: sweet.imageAsset!,
             isActive: isActive,
             isDetailOpen: state.isDetailOpen,
             hostKey: isActive ? _activeImageKey : null,
@@ -303,11 +305,7 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                     ),
                     child: FittedBox(
                       fit: BoxFit.cover,
-                      child: Image.asset(
-                        sweet.imageAsset,
-                        errorBuilder: (_, __, ___) =>
-                            const Icon(Icons.circle, size: 12),
-                      ),
+                      child: _thumbFor(sweet),
                     ),
                   ),
                 ),
@@ -323,13 +321,10 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
 
     controller.addStatusListener((st) {
       if (st == AnimationStatus.completed || st == AnimationStatus.dismissed) {
-        // Only remove if still attached; prevents "overlay != null" assert
         if (entry.mounted) {
           try {
             entry.remove();
-          } catch (_) {
-            // ignore
-          }
+          } catch (_) {}
         }
         if (identical(_flyEntry, entry)) {
           _flyEntry = null;
@@ -338,8 +333,25 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
       }
     });
 
-    // If widget gets disposed early, controller will be disposed in the listener on dismiss
     controller.forward();
+  }
+
+  // Builds a tiny thumbnail for the fly-to-cart animation, supporting either
+  // a network image or an asset. Falls back to an icon if neither provided.
+  Widget _thumbFor(Sweet s) {
+    if (s.imageUrl != null && s.imageUrl!.isNotEmpty) {
+      return Image.network(
+        s.imageUrl!,
+        errorBuilder: (_, __, ___) => const Icon(Icons.circle, size: 12),
+      );
+    }
+    if (s.imageAsset != null && s.imageAsset!.isNotEmpty) {
+      return Image.asset(
+        s.imageAsset!,
+        errorBuilder: (_, __, ___) => const Icon(Icons.circle, size: 12),
+      );
+    }
+    return const Icon(Icons.circle, size: 12);
   }
 
   double _arc(double t) => math.sin(t * math.pi);
@@ -402,9 +414,9 @@ class _QtyStepper extends StatelessWidget {
     return InkWell(
       borderRadius: BorderRadius.circular(24),
       onTap: onTap,
-      child: const Padding(
-        padding: EdgeInsets.all(8.0),
-                child: Icon(Icons.add, size: 22), // icon overridden by caller
+      child: Padding(
+        padding: const EdgeInsets.all(8.0),
+        child: Icon(icon, size: 22), // use the icon the caller asked for
       ),
     );
   }

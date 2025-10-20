@@ -3,97 +3,101 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-// Use a prefix to avoid the name clash with Firestore's internal `Order` type.
+// Avoid name clash with Firestore's internal Order types.
 import 'order_models.dart' as om;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 
-import '../../../core/config/app_config.dart';
+import '../../../core/config/slug_routing.dart';
 
 typedef Json = Map<String, dynamic>;
 
-/// Read Functions region from a build-time define. Defaults to me-central2.
-/// Pass like: --dart-define FUNCTIONS_REGION=me-central2
-const String _kFunctionsRegion =
-    String.fromEnvironment('FUNCTIONS_REGION', defaultValue: 'me-central2');
-
-const String _kCreateOrderFn = 'createOrder';
-
-/// OrderService:
-/// - createOrder(): calls Cloud Function (server-authoritative).
-/// - watchOrder(): live stream of the order doc in Firestore.
+/// OrderService (FREE plan):
+/// - createOrder(): writes directly to Firestore (no Cloud Functions).
+/// - watchOrder(): streams the order doc from Firestore.
 class OrderService {
-  OrderService(this._config)
-      : _functions = FirebaseFunctions.instanceFor(region: _kFunctionsRegion);
+  OrderService({required this.merchantId, required this.branchId});
 
-  final AppConfig _config;
+  final String merchantId;
+  final String branchId;
   final FirebaseFirestore _fs = FirebaseFirestore.instance;
-  final FirebaseFunctions _functions;
 
-  /// Creates an order via Cloud Function (no client-side fallback).
+  // Shorthands
+  String get _m => merchantId;
+  String get _b => branchId;
+
+  /// Creates an order by writing to Firestore (server-authoritative rules).
   ///
-  /// Server is authoritative over:
-  /// - Pricing (reads from menuItems)
-  /// - Subtotal (rounded to 3dp)
-  /// - Order number (sequential via counters doc)
-  /// - createdAt (serverTimestamp)
+  /// Firestore Rules will validate:
+  /// - userId matches current uid
+  /// - status == "pending"
+  /// - merchantId / branchId match path
+  /// - items is a non-empty list (bounded)
+  /// - Only staff can later update `status`
   Future<om.Order> createOrder({
     required List<om.OrderItem> items,
     String? table,
   }) async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) {
-      throw StateError('Not signed in; anonymous auth must be initialized.');
+      throw StateError('Not signed in; initialize anonymous auth first.');
     }
+    if (items.isEmpty) {
+      throw StateError('Cart is empty.');
+    }
+
+    // Subtotal rounded to 3 decimals (BHD)
+    final subtotal = double.parse(
+      items
+          .fold<num>(0, (s, it) => s + (it.price * it.qty))
+          .toStringAsFixed(3),
+    );
 
     try {
       if (kDebugMode) {
         debugPrint(
-          '[OrderService] Calling $_kCreateOrderFn in region=$_kFunctionsRegion '
-          'm=${_config.merchantId} b=${_config.branchId} items=${items.length}',
+          '[OrderService] Creating order m=$_m b=$_b items=${items.length}',
         );
       }
 
-      final callable = _functions.httpsCallable(_kCreateOrderFn);
-      final res = await callable.call(<String, dynamic>{
-        'merchantId': _config.merchantId,
-        'branchId': _config.branchId,
+      final doc = _fs
+          .collection('merchants')
+          .doc(_m)
+          .collection('branches')
+          .doc(_b)
+          .collection('orders')
+          .doc();
+
+      await doc.set({
+        'merchantId': _m,
+        'branchId': _b,
+        'userId': uid,
+        'status': 'pending',
         'items': items
-            .map((e) => <String, dynamic>{
+            .map((e) => {
                   'productId': e.productId,
+                  'name': e.name,
+                  'price': e.price,
                   'qty': e.qty,
                 })
             .toList(),
+        'subtotal': subtotal,
+        'currency': 'BHD',
         'table': table,
+        'createdAt': FieldValue.serverTimestamp(),
+        // 'orderNo' optional on free plan
       });
 
-      // Defensive parsing (Functions can serialize numbers as int or double)
-      final Json data = _safeJson(res.data);
-
-      final String orderId = _asString(data['orderId']);
-      final String orderNo = _asString(data['orderNo'], fallback: '—');
-      final om.OrderStatus status =
-          _statusFromString(_asString(data['status'], fallback: 'pending'));
-      final double subtotal =
-          _asNum(data['subtotal']).toDouble(); // already 3dp from server
-
       return om.Order(
-        orderId: orderId,
-        orderNo: orderNo,
-        status: status,
-        createdAt: DateTime.now(), // replaced by stream below
-        items: items, // UI will rehydrate from Firestore stream anyway
+        orderId: doc.id,
+        orderNo: '—',
+        status: om.OrderStatus.pending,
+        createdAt: DateTime.now(), // precise time comes from watchOrder()
+        items: items,
         subtotal: subtotal,
         table: table,
       );
-    } on FirebaseFunctionsException catch (e, st) {
-      if (kDebugMode) {
-        debugPrint(
-            'createOrder(): FirebaseFunctionsException code=${e.code} message=${e.message}\n$st');
-      }
-      rethrow;
     } catch (e, st) {
       if (kDebugMode) {
         debugPrint('createOrder(): Unexpected error: $e\n$st');
@@ -102,7 +106,7 @@ class OrderService {
     }
   }
 
-  /// Live stream of the order doc in Firestore.
+  /// Live stream of the order document.
   Stream<om.Order> watchOrder(String orderId) {
     final docRef = _orderDoc(orderId);
     return docRef.snapshots().where((s) => s.exists).map((snap) {
@@ -115,7 +119,7 @@ class OrderService {
 
       final List<dynamic> rawItems = (data['items'] as List?) ?? const [];
       final List<om.OrderItem> itemsList = rawItems
-          .whereType<Map>() // tighter than Object
+          .whereType<Map>() // ensures map elements only
           .map((m) => _itemFromMap(_safeJson(m)))
           .toList();
 
@@ -136,12 +140,12 @@ class OrderService {
     });
   }
 
-  DocumentReference<Json> _orderDoc(String orderId) {
+  DocumentReference<Map<String, dynamic>> _orderDoc(String orderId) {
     return _fs
         .collection('merchants')
-        .doc(_config.merchantId)
+        .doc(_m)
         .collection('branches')
-        .doc(_config.branchId)
+        .doc(_b)
         .collection('orders')
         .doc(orderId);
   }
@@ -177,13 +181,8 @@ class OrderService {
   // --------------------------- helpers: parsing ---------------------------
 
   static Json _safeJson(Object? o) {
-    if (o is Map<String, dynamic>) {
-      return o;
-    }
-    if (o is Map) {
-      // No cast needed; we're already inside the `o is Map` branch.
-      return Map<String, dynamic>.from(o);
-    }
+    if (o is Map<String, dynamic>) return o;
+    if (o is Map) return Map<String, dynamic>.from(o);
     throw StateError('Expected Map, got $o');
   }
 
@@ -210,8 +209,11 @@ class OrderService {
   }
 }
 
-/// Riverpod provider wiring AppConfig into OrderService.
+/// Riverpod provider resolving pretty links (slug) or explicit IDs.
 final orderServiceProvider = Provider<OrderService>((ref) {
-  final cfg = ref.watch(appConfigProvider);
-  return OrderService(cfg);
+  final ids = ref.watch(effectiveIdsProvider);
+  if (ids == null) {
+    throw StateError('Missing merchant/branch (provide ?m=&b= or a valid slug).');
+  }
+  return OrderService(merchantId: ids.merchantId, branchId: ids.branchId);
 });

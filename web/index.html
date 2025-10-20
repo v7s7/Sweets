@@ -1,37 +1,41 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
   <head>
-    <!-- If you are serving your web app in a path other than the root, change the
-         href value below to reflect the base path you are serving from.
-         The path must start and end with a slash "/" to work correctly. -->
+    <!-- If you serve under a subpath, Flutter replaces this at build time. -->
     <base href="$FLUTTER_BASE_HREF" />
 
     <meta charset="UTF-8" />
     <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
-    <meta name="description" content="Sweets PWA" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Sweets PWA" />
+    <meta name="theme-color" content="#ffffff" />
 
-    <!-- iOS meta tags & icons -->
+    <!-- PWA / icons -->
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <link rel="apple-touch-icon" href="icons/Icon-192.png" />
     <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <meta name="apple-mobile-web-app-title" content="Sweets" />
-    <link rel="apple-touch-icon" href="icons/Icon-192.png" />
-
-    <!-- Favicon -->
-    <link rel="icon" type="image/png" href="favicon.png" />
 
     <title>Sweets</title>
-    <link rel="manifest" href="manifest.json" />
 
-    <!-- App Check: enable debug token on localhost (remove/disable for production) -->
+    <!-- App Check debug token only on localhost -->
     <script>
-      // When true, Firebase will print a debug token in the console on first load.
-      // Copy that token into App Check → Debug tokens if you need to whitelist it.
-      self.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
+      (function () {
+        const h = location.hostname;
+        const local = h === "localhost" || h === "127.0.0.1" || h === "0.0.0.0";
+        if (local) self.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
+      })();
     </script>
   </head>
   <body>
-    <!-- Flutter bootstrap (loads main.dart.js) -->
-    <script src="flutter_bootstrap.js" async></script>
+    <noscript>
+      <p>This app requires JavaScript to run.</p>
+    </noscript>
+
+    <!-- Flutter bootstrap (loads main.dart.js / service worker) -->
+    <script src="flutter_bootstrap.js" defer></script>
   </body>
 </html>
