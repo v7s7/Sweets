@@ -11,6 +11,7 @@ import 'core/config/app_config.dart';
 import 'core/config/slug_routing.dart';
 import 'features/sweets/widgets/sweets_viewport.dart';
 import 'features/cart/widgets/cart_sheet.dart';
+import 'features/cart/state/cart_controller.dart'; // for live cart count
 
 class SweetsApp extends ConsumerStatefulWidget {
   const SweetsApp({Key? key}) : super(key: key);
@@ -144,11 +145,15 @@ class _CustomerScaffoldState extends ConsumerState<_CustomerScaffold> {
     );
 
     final onSurface = Theme.of(context).colorScheme.onSurface;
+    final cartCount = ref.watch(
+      cartControllerProvider.select((c) => c.totalCount),
+    );
 
     return Scaffold(
       backgroundColor: Theme.of(context).colorScheme.surface, // ensure primaryHex fills background
       extendBodyBehindAppBar: true,
       appBar: AppBar(
+        automaticallyImplyLeading: false, // hides the back arrow
         title: Text(
           b.title,
           style: AppTheme.scriptTitle.copyWith(color: onSurface),
@@ -156,17 +161,31 @@ class _CustomerScaffoldState extends ConsumerState<_CustomerScaffold> {
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 8),
-            child: OutlinedButton(
-              key: _cartActionKey, // key shared with SweetsViewport
-              style: OutlinedButton.styleFrom(
-                shape: const CircleBorder(),
-                side: BorderSide(color: onSurface),
-                minimumSize: const Size(40, 40),
-                padding: EdgeInsets.zero,
-                foregroundColor: onSurface, // icon color
-              ),
-              onPressed: _openCartSheet,
-              child: const Icon(Icons.shopping_bag_outlined, size: 18),
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                OutlinedButton(
+                  key: _cartActionKey, // key shared with SweetsViewport
+                  style: OutlinedButton.styleFrom(
+                    shape: const CircleBorder(),
+                    side: BorderSide(color: onSurface),
+                    minimumSize: const Size(40, 40),
+                    padding: EdgeInsets.zero,
+                    foregroundColor: onSurface, // icon color
+                  ),
+                  onPressed: _openCartSheet,
+                  child: const Icon(Icons.shopping_bag_outlined, size: 18),
+                ),
+                if (cartCount > 0)
+                  Positioned(
+                    right: -2,
+                    top: -2,
+                    child: IgnorePointer(
+                      ignoring: true, // allow taps to hit the button
+                      child: _CartCountBadge(count: cartCount, onSurface: onSurface),
+                    ),
+                  ),
+              ],
             ),
           ),
         ],
@@ -217,6 +236,33 @@ class _WaitingOrError extends ConsumerWidget {
               Text(message, textAlign: TextAlign.center, style: const TextStyle(fontSize: 16)),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CartCountBadge extends StatelessWidget {
+  final int count;
+  final Color onSurface;
+  const _CartCountBadge({required this.count, required this.onSurface});
+
+  @override
+  Widget build(BuildContext context) {
+    final text = count > 99 ? '99+' : count.toString();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.30),   // neutral dark overlay
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: onSurface.withOpacity(0.6)),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: onSurface,                      // secondary/onSurface
+          fontSize: 10,
+          fontWeight: FontWeight.w800,
         ),
       ),
     );
