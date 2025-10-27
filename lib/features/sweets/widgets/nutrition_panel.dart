@@ -1,3 +1,4 @@
+// lib/features/sweets/widgets/nutrition_panel.dart
 import 'package:flutter/material.dart';
 import '../../sweets/data/sweet.dart';
 
@@ -15,62 +16,93 @@ class NutritionPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Nutritional info panel; animates in/out. Neutral about side placement.
+    final onSurface = Theme.of(context).colorScheme.onSurface;
+
+    // Collect only provided values (handle nulls safely)
+    final entries = <_Entry>[];
+    final int calories = sweet.calories ?? 0;
+    if (calories > 0) entries.add(_Entry('Energy', '$calories kcal'));
+
+    final double? protein = sweet.protein;
+    if (protein != null && protein > 0) {
+      entries.add(_Entry('Protein', _g(protein)));
+    }
+
+    final double? carbs = sweet.carbs;
+    if (carbs != null && carbs > 0) {
+      entries.add(_Entry('Carbs', _g(carbs)));
+    }
+
+    final double? fat = sweet.fat;
+    if (fat != null && fat > 0) {
+      entries.add(_Entry('Fat', _g(fat)));
+    }
+
+    final double? sugar = sweet.sugar;
+    if (sugar != null && sugar > 0) {
+      entries.add(_Entry('Sugar', _g(sugar)));
+    }
+
     return IgnorePointer(
       ignoring: !visible,
       child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 220),
         opacity: visible ? 1 : 0,
-        duration: const Duration(milliseconds: 180),
         child: AnimatedSlide(
-          // Slide from the right when appearing (works well when panel is aligned right).
-          offset: visible ? Offset.zero : const Offset(0.3, 0),
-          duration: const Duration(milliseconds: 280),
-          curve: Curves.easeOutCubic,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOut,
+          offset: visible ? Offset.zero : const Offset(0.15, 0),
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 280),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _pill(
-                    context,
-                    title: 'Protein',
-                    value: '${_fmtNum(sweet.protein)} g',
-                    percent: 8,
-                  ),
-                  const SizedBox(height: 12),
-                  _pill(
-                    context,
-                    title: 'Carbs',
-                    value: '${_fmtNum(sweet.carbs)} g',
-                    percent: 12,
-                  ),
-                  const SizedBox(height: 12),
-                  _pill(
-                    context,
-                    title: 'Fat',
-                    value: '${_fmtNum(sweet.fat)} g',
-                    percent: 12,
-                  ),
-                  const SizedBox(height: 12),
-                  _pill(
-                    context,
-                    title: 'Sugar',
-                    value: '${_fmtNum(sweet.sugar)} g',
-                    percent: 12,
-                  ),
-                  const SizedBox(height: 12),
-                  _pill(
-                    context,
-                    title: 'Energy',
-                    value: '${_fmtNum(sweet.calories)} kcal',
-                    percent: 40,
-                  ),
-                  const SizedBox(height: 8),
-                  IconButton(onPressed: onClose, icon: const Icon(Icons.close_rounded)),
-                ],
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.80), // 0.2 background
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: onSurface.withOpacity(0.18)),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          'Nutrition',
+                          style: TextStyle(
+                            color: onSurface, // secondary color
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                          ),
+                        ),
+                        const Spacer(),
+                        IconButton(
+                          tooltip: 'Close',
+                          onPressed: onClose,
+                          icon: Icon(Icons.close_rounded, color: onSurface),
+                          splashRadius: 18,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+
+                    if (entries.isEmpty)
+                      Text(
+                        'No nutrition info',
+                        style: TextStyle(color: onSurface.withOpacity(0.7)),
+                      )
+                    else
+                      Wrap(
+                        runSpacing: 10,
+                        spacing: 16,
+                        children: entries
+                            .map((e) =>
+                                _Tile(label: e.label, value: e.value, onSurface: onSurface))
+                            .toList(),
+                      ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -79,50 +111,50 @@ class NutritionPanel extends StatelessWidget {
     );
   }
 
-  Widget _pill(BuildContext context,
-      {required String title, required String value, required int percent}) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.85),
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: const [
-          BoxShadow(color: Color(0x16000000), blurRadius: 14, offset: Offset(0, 8)),
-        ],
-        border: Border.all(color: const Color(0x10A0A0A0)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text('$title $value', style: Theme.of(context).textTheme.bodyMedium),
-          const SizedBox(width: 10),
-          _percentBadge(percent),
-        ],
-      ),
-    );
-  }
-
-  Widget _percentBadge(int p) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: const Color(0xFF111111),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Text(
-        '$p%',
-        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
-      ),
-    );
+  static String _g(double v) {
+    final isWhole = v == v.truncateToDouble();
+    return '${isWhole ? v.toStringAsFixed(0) : v.toStringAsFixed(1)} g';
   }
 }
 
-/// Formats nullable numbers for display:
-/// - `null` → "0"
-/// - integers → no decimals
-/// - non-integers → 1 decimal
-String _fmtNum(num? v) {
-  final n = v ?? 0;
-  final isWhole = (n == n.roundToDouble());
-  return isWhole ? n.toStringAsFixed(0) : n.toStringAsFixed(1);
+class _Entry {
+  final String label;
+  final String value;
+  _Entry(this.label, this.value);
+}
+
+class _Tile extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color onSurface;
+  const _Tile({required this.label, required this.value, required this.onSurface});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 116,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              color: onSurface.withOpacity(0.7),
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: TextStyle(
+              color: onSurface, // secondary color
+              fontSize: 14,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
