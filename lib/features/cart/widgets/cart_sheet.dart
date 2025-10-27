@@ -97,6 +97,21 @@ class CartSheet extends ConsumerWidget {
 
         final onSurface = Theme.of(context).colorScheme.onSurface;
 
+        // Force the confirm button to always *look* disabled, in both states.
+        final Color _fgDisabled = onSurface.withOpacity(0.38);
+        final Color _bgDisabled = onSurface.withOpacity(0.12);
+        final ButtonStyle _confirmStyle = ButtonStyle(
+          foregroundColor: MaterialStatePropertyAll(_fgDisabled),
+          backgroundColor: MaterialStatePropertyAll(_bgDisabled),
+          overlayColor: const MaterialStatePropertyAll(Colors.transparent),
+          shadowColor: const MaterialStatePropertyAll(Colors.transparent),
+          elevation: const MaterialStatePropertyAll(0),
+          minimumSize: const MaterialStatePropertyAll(Size.fromHeight(48)),
+          shape: MaterialStatePropertyAll(
+            RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+
         return SafeArea(
           top: false,
           child: Padding(
@@ -213,13 +228,7 @@ class CartSheet extends ConsumerWidget {
                           },
                     icon: const Icon(Icons.check_circle_outline),
                     label: const Text('Confirm Order'),
-                    style: ElevatedButton.styleFrom(
-                      minimumSize: const Size.fromHeight(48),
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
+                    style: _confirmStyle, // <-- same visual in both states
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -370,7 +379,7 @@ class _QtyChip extends StatelessWidget {
 
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.30), // neutral dark overlay
+        color: Colors.black.withOpacity(0.10), // neutral dark overlay
         borderRadius: BorderRadius.circular(24),
       ),
       child: Row(
