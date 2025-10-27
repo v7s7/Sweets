@@ -9,3 +9,4 @@ build/
 android/.gradle/
 ios/Pods/
 *.iml
+scripts/serviceAccount.json

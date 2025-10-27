@@ -1,3 +1,4 @@
+// lib/merchant/main_merchant.dart (COMPLETE FIX)
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_web_plugins/url_strategy.dart';
@@ -8,7 +9,7 @@ import 'package:firebase_app_check/firebase_app_check.dart';
 
 import '../firebase_options.dart';
 import '../core/config/app_config.dart';
-import '../core/config/slug_routing.dart'; // slugLookupProvider/effectiveIds
+import '../core/config/slug_routing.dart';
 import '../core/branding/branding_providers.dart';
 import 'screens/login_screen.dart';
 import 'screens/products_screen.dart';
@@ -56,54 +57,46 @@ class MerchantApp extends ConsumerStatefulWidget {
 }
 
 class _MerchantAppState extends ConsumerState<MerchantApp> {
-  String? _m;
-  String? _b;
-
-  void _applyIdsAfterFrame(String m, String b) {
-    if (_m == m && _b == b) return; // already applied
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(merchantIdProvider.notifier).setId(m);
-      ref.read(branchIdProvider.notifier).setId(b);
-      if (mounted) setState(() {
-        _m = m;
-        _b = b;
-      });
-    });
-  }
+  bool _idsApplied = false;
 
   @override
   void initState() {
     super.initState();
+    
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _tryApplyIds();
+    });
+  }
 
-    // 1) Try explicit IDs from URL (?m=&b=)
-    final cfg = ref.read(appConfigProvider);
-    if (cfg.merchantId != null && cfg.branchId != null) {
-      _applyIdsAfterFrame(cfg.merchantId!, cfg.branchId!);
+  void _tryApplyIds() {
+    final ids = ref.read(effectiveIdsProvider);
+    
+    if (ids != null && !_idsApplied) {
+      print('🟢 Merchant App: Applying IDs m=${ids.merchantId} b=${ids.branchId}');
+      
+      ref.read(merchantIdProvider.notifier).setId(ids.merchantId);
+      ref.read(branchIdProvider.notifier).setId(ids.branchId);
+      
+      setState(() {
+        _idsApplied = true;
+      });
     }
-
-    // ❌ Do NOT call ref.listen here (Riverpod v3 forbids it in initState)
   }
 
   @override
   Widget build(BuildContext context) {
-    // ✅ Allowed in Riverpod v3: listen during build
-    ref.listen<AsyncValue<({String merchantId, String branchId})?>>(
-      slugLookupProvider,
-      (prev, next) {
-        next.whenData((mb) {
-          if (mb != null) _applyIdsAfterFrame(mb.merchantId, mb.branchId);
-        });
-      },
-    );
+    // Listen for ID changes
+    ref.listen<MerchantBranch?>(effectiveIdsProvider, (prev, next) {
+      if (next != null && !_idsApplied) {
+        _tryApplyIds();
+      }
+    });
 
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Sweets – Merchant Console',
       theme: ThemeData(colorSchemeSeed: Colors.pink, useMaterial3: true),
-
-      // Force start at "/" even if URL is /s/<slug>; we still parse slug via AppConfig.
       initialRoute: '/',
-
       onGenerateRoute: (settings) {
         return MaterialPageRoute(
           builder: (_) => StreamBuilder<User?>(
@@ -112,18 +105,20 @@ class _MerchantAppState extends ConsumerState<MerchantApp> {
               final user = snap.data;
               if (user == null) return const LoginScreen();
 
-              if (_m == null || _b == null) {
-                // Waiting for ?m=&b= or slug resolution
+              if (!_idsApplied) {
                 final cfg = ref.watch(appConfigProvider);
                 final hint = (cfg.merchantId != null && cfg.branchId != null)
-                    ? 'Applying IDs…'
+                    ? 'Loading...'
                     : (cfg.slug != null
-                        ? 'Resolving slug "${cfg.slug}"…'
-                        : 'Open with ?m=<merchantId>&b=<branchId> or /s/<slug>');
+                        ? 'Resolving "${cfg.slug}"...'
+                        : '⚠️ Open with:\n• /s/<slug>\n• ?m=<merchantId>&b=<branchId>');
                 return _NeedIdsPage(hint: hint);
               }
 
-              return ProductsScreen(merchantId: _m!, branchId: _b!);
+              final m = ref.read(merchantIdProvider);
+              final b = ref.read(branchIdProvider);
+              
+              return ProductsScreen(merchantId: m, branchId: b);
             },
           ),
           settings: settings,
@@ -136,8 +131,23 @@ class _MerchantAppState extends ConsumerState<MerchantApp> {
 class _NeedIdsPage extends StatelessWidget {
   final String hint;
   const _NeedIdsPage({required this.hint});
+  
   @override
   Widget build(BuildContext context) {
-    return Scaffold(body: Center(child: Text(hint)));
+    return Scaffold(
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 24),
+              Text(hint, textAlign: TextAlign.center),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

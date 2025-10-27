@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:file_picker/file_picker.dart';
@@ -10,7 +11,7 @@ import 'package:http/http.dart' as http;
 import '../../core/branding/branding_admin_page.dart';
 
 /// Merchant product manager (Cloudinary + Firestore).
-/// Defaults can be overridden at build time with:
+/// Override at build time:
 ///   --dart-define=CLOUDINARY_CLOUD=<cloud_name>
 ///   --dart-define=CLOUDINARY_PRESET=<unsigned_preset>
 class ProductsScreen extends StatelessWidget {
@@ -50,8 +51,10 @@ class ProductsScreen extends StatelessWidget {
           );
         }
 
-        final itemsCol = FirebaseFirestore.instance
-            .collection('merchants/$merchantId/branches/$branchId/menuItems')
+        final itemsQuery = FirebaseFirestore.instance
+            .collection('merchants').doc(merchantId)
+            .collection('branches').doc(branchId)
+            .collection('menuItems')
             .orderBy('sort', descending: false);
 
         return Scaffold(
@@ -78,7 +81,7 @@ class ProductsScreen extends StatelessWidget {
             icon: const Icon(Icons.add),
           ),
           body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-            stream: itemsCol.snapshots(),
+            stream: itemsQuery.snapshots(),
             builder: (context, snap) {
               if (snap.connectionState == ConnectionState.waiting) {
                 return const Center(child: CircularProgressIndicator());
@@ -104,26 +107,27 @@ class ProductsScreen extends StatelessWidget {
                 itemBuilder: (context, i) {
                   final d = docs[i];
                   final v = d.data();
-                  final num priceNum = (v['price'] ?? 0) as num;
+
+                  // Robust price formatting (BHD → 3dp)
+                  final double price = _asDouble(v['price']);
+                  final String priceStr = price.toStringAsFixed(3);
+
+                  final String name = (v['name'] ?? d.id).toString();
+                  final String imageUrl = (v['imageUrl'] ?? '').toString();
+
+                  final String kcal = (v['calories']?.toString() ?? '').trim();
+                  final subtitle = kcal.isNotEmpty
+                      ? 'BHD $priceStr • $kcal kcal'
+                      : 'BHD $priceStr';
+
                   return ListTile(
-                    leading: v['imageUrl'] != null && (v['imageUrl'] as String).isNotEmpty
-                        ? Image.network(
-                            v['imageUrl'],
-                            width: 56,
-                            height: 56,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) =>
-                                const SizedBox(width: 56, height: 56),
-                          )
-                        : const SizedBox(width: 56, height: 56),
-                    title: Text((v['name'] ?? d.id).toString()),
-                    subtitle: Text(
-                      'BHD ${priceNum.toStringAsFixed(3)}'
-                      '${v['calories'] != null ? ' • ${v['calories']} kcal' : ''}',
-                    ),
+                    leading: _ProductThumb(imageUrl: imageUrl),
+                    title: Text(name),
+                    subtitle: Text(subtitle),
                     trailing: IconButton(
                       icon: const Icon(Icons.edit),
-                      onPressed: () => _openEditor(context, merchantId, branchId, d),
+                      onPressed: () =>
+                          _openEditor(context, merchantId, branchId, d),
                     ),
                   );
                 },
@@ -144,11 +148,43 @@ class ProductsScreen extends StatelessWidget {
     await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       builder: (_) => ProductEditorSheet(
         merchantId: m,
         branchId: b,
         existing: doc,
       ),
+    );
+  }
+}
+
+class _ProductThumb extends StatelessWidget {
+  final String imageUrl;
+  const _ProductThumb({required this.imageUrl});
+
+  @override
+  Widget build(BuildContext context) {
+    final onSurface = Theme.of(context).colorScheme.onSurface;
+    final bg = onSurface.withOpacity(0.08);
+    return Container(
+      width: 56,
+      height: 56,
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: onSurface.withOpacity(0.12)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: imageUrl.isNotEmpty
+          ? Image.network(
+              imageUrl,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) {
+                debugPrint('Thumbnail failed to load: $imageUrl');
+                return const SizedBox.shrink();
+              },
+            )
+          : const Icon(Icons.add_a_photo),
     );
   }
 }
@@ -184,9 +220,8 @@ class _ProductEditorSheetState extends State<ProductEditorSheet> {
   // Defaults to your account values; can be overridden with --dart-define.
   static const _cloudName =
       String.fromEnvironment('CLOUDINARY_CLOUD', defaultValue: 'dkirkzbfa');
-  static const _unsignedPreset = String.fromEnvironment(
-      'CLOUDINARY_PRESET',
-      defaultValue: 'unsigned_products');
+  static const _unsignedPreset =
+      String.fromEnvironment('CLOUDINARY_PRESET', defaultValue: 'unsigned_products');
 
   @override
   void initState() {
@@ -207,9 +242,11 @@ class _ProductEditorSheetState extends State<ProductEditorSheet> {
 
   Future<void> _pickAndUpload() async {
     if (_cloudName.isEmpty || _unsignedPreset.isEmpty) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text(
-            'Cloudinary not configured. Set CLOUDINARY_CLOUD & CLOUDINARY_PRESET.'),
+          'Cloudinary not configured. Set CLOUDINARY_CLOUD & CLOUDINARY_PRESET.',
+        ),
       ));
       return;
     }
@@ -232,8 +269,8 @@ class _ProductEditorSheetState extends State<ProductEditorSheet> {
 
       final req = http.MultipartRequest('POST', uri)
         ..fields['upload_preset'] = _unsignedPreset
-        // We pass folder dynamically; preset should have Asset folder blank.
-        ..fields['folder'] = 'sweets/${widget.merchantId}/products'
+        ..fields['folder'] =
+            'sweets/${widget.merchantId}/${widget.branchId}/products'
         ..files.add(
           http.MultipartFile.fromBytes('file', bytes, filename: file.name),
         );
@@ -242,8 +279,7 @@ class _ProductEditorSheetState extends State<ProductEditorSheet> {
       final body = await streamed.stream.bytesToString();
 
       if (streamed.statusCode != 200 && streamed.statusCode != 201) {
-        throw Exception(
-            'Cloudinary upload failed ${streamed.statusCode}: $body');
+        throw Exception('Cloudinary upload failed ${streamed.statusCode}: $body');
       }
 
       final json = jsonDecode(body) as Map<String, dynamic>;
@@ -265,15 +301,21 @@ class _ProductEditorSheetState extends State<ProductEditorSheet> {
   Future<void> _save() async {
     setState(() => _busy = true);
     try {
+      // Price: parse and clamp to 3dp for BHD
+      double price = _asDouble(_price.text.trim());
+      price = double.parse(price.toStringAsFixed(3));
+
       final data = {
+        'merchantId': widget.merchantId, // helpful for collectionGroup queries
+        'branchId': widget.branchId,
         'name': _name.text.trim(),
-        'price': double.tryParse(_price.text.trim()) ?? 0.0,
+        'price': price,
         'imageUrl': _imageUrl,
-        'calories': int.tryParse(_cal.text.trim()),
-        'protein': double.tryParse(_protein.text.trim()),
-        'carbs': double.tryParse(_carbs.text.trim()),
-        'fat': double.tryParse(_fat.text.trim()),
-        'sugar': double.tryParse(_sugar.text.trim()),
+        'calories': _asIntOrNull(_cal.text.trim()),
+        'protein': _asDoubleOrNull(_protein.text.trim()),
+        'carbs': _asDoubleOrNull(_carbs.text.trim()),
+        'fat': _asDoubleOrNull(_fat.text.trim()),
+        'sugar': _asDoubleOrNull(_sugar.text.trim()),
         'tags': _tags.text
             .split(',')
             .map((s) => s.trim())
@@ -284,12 +326,16 @@ class _ProductEditorSheetState extends State<ProductEditorSheet> {
         'updatedAt': FieldValue.serverTimestamp(),
       };
 
-      final col = FirebaseFirestore.instance.collection(
-        'merchants/${widget.merchantId}/branches/${widget.branchId}/menuItems',
-      );
+      final col = FirebaseFirestore.instance
+          .collection('merchants').doc(widget.merchantId)
+          .collection('branches').doc(widget.branchId)
+          .collection('menuItems');
 
       if (widget.existing == null) {
-        await col.add(data);
+        await col.add({
+          ...data,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
       } else {
         await col.doc(widget.existing!.id).set(data, SetOptions(merge: true));
       }
@@ -302,6 +348,8 @@ class _ProductEditorSheetState extends State<ProductEditorSheet> {
   @override
   Widget build(BuildContext context) {
     final bottomPad = MediaQuery.of(context).viewInsets.bottom;
+    final onSurface = Theme.of(context).colorScheme.onSurface;
+
     return Padding(
       padding: EdgeInsets.only(bottom: bottomPad),
       child: SingleChildScrollView(
@@ -322,7 +370,12 @@ class _ProductEditorSheetState extends State<ProductEditorSheet> {
                     child: Container(
                       width: 96,
                       height: 96,
-                      color: Colors.grey.shade200,
+                      decoration: BoxDecoration(
+                        color: onSurface.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: onSurface.withOpacity(0.12)),
+                      ),
+                      clipBehavior: Clip.antiAlias,
                       child: _imageUrl == null
                           ? const Icon(Icons.add_a_photo)
                           : Image.network(_imageUrl!, fit: BoxFit.cover),
@@ -334,13 +387,13 @@ class _ProductEditorSheetState extends State<ProductEditorSheet> {
                       children: [
                         TextField(
                           controller: _name,
-                          decoration:
-                              const InputDecoration(labelText: 'Name'),
+                          decoration: const InputDecoration(labelText: 'Name'),
                         ),
                         TextField(
                           controller: _price,
                           decoration: const InputDecoration(
-                              labelText: 'Price (BHD, 3dp)'),
+                            labelText: 'Price (BHD, 3dp)',
+                          ),
                           keyboardType: const TextInputType.numberWithOptions(
                             decimal: true,
                           ),
@@ -366,7 +419,8 @@ class _ProductEditorSheetState extends State<ProductEditorSheet> {
               TextField(
                 controller: _tags,
                 decoration: const InputDecoration(
-                    labelText: 'Tags (comma-separated)'),
+                  labelText: 'Tags (comma-separated)',
+                ),
               ),
               const SizedBox(height: 16),
               Row(
@@ -401,10 +455,28 @@ class _ProductEditorSheetState extends State<ProductEditorSheet> {
       width: 180,
       child: TextField(
         controller: c,
-        keyboardType:
-            const TextInputType.numberWithOptions(decimal: true),
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
         decoration: InputDecoration(labelText: label),
       ),
     );
   }
+}
+
+/* ---------- Shared parsing helpers (top-level) ---------- */
+
+int? _asIntOrNull(String s) {
+  final t = s.trim();
+  if (t.isEmpty) return null;
+  return int.tryParse(t);
+}
+
+double _asDouble(Object? v) {
+  if (v is num) return v.toDouble();
+  return double.tryParse(v?.toString().trim() ?? '') ?? 0.0;
+}
+
+double? _asDoubleOrNull(String s) {
+  final t = s.trim();
+  if (t.isEmpty) return null;
+  return double.tryParse(t);
 }

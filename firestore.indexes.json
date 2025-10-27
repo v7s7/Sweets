@@ -1,0 +1,13 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "menuItems",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "isActive", "order": "ASCENDING" },
+        { "fieldPath": "sort", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

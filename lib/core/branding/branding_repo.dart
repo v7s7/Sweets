@@ -1,32 +1,50 @@
-// lib/core/branding/branding_repo.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import 'branding.dart';
 
 class BrandingRepo {
-  final FirebaseFirestore _db;
-  BrandingRepo(this._db);
+  final FirebaseFirestore db;
+  BrandingRepo(this.db);
 
-  Stream<Branding> watch(String merchantId, String branchId) {
-    final ref = _db
-        .collection('merchants').doc(merchantId)
-        .collection('branches').doc(branchId)
+  DocumentReference<Map<String, dynamic>> _doc(String m, String b) {
+    // ✅ Match your Firestore structure
+    return db
+        .collection('merchants').doc(m)
+        .collection('branches').doc(b)
         .collection('config').doc('branding');
-
-    return ref.snapshots().map((s) => s.exists
-        ? Branding.fromMap(s.data()!)
-        : const Branding(
-            title: 'App',
-            headerText: '',
-            primaryHex: '#E91E63',
-            secondaryHex: '#FFB300',
-          ));
   }
 
-  Future<void> save(String merchantId, String branchId, Branding b) async {
-    final ref = _db
-        .collection('merchants').doc(merchantId)
-        .collection('branches').doc(branchId)
-        .collection('config').doc('branding');
-    await ref.set(b.toMap(), SetOptions(merge: true));
+  Stream<Branding> watch(String m, String b) {
+    final path = 'merchants/$m/branches/$b/config/branding';
+    debugPrint('BrandingRepo.watch -> $path'); // sanity log
+    return _doc(m, b).snapshots().map((snap) {
+      if (!snap.exists) {
+        debugPrint('Branding doc missing at $path -> using fallback');
+        return const Branding(
+          title: 'App',
+          headerText: '',
+          primaryHex: '#E91E63',
+          secondaryHex: '#FFB300',
+        );
+      }
+      final d = snap.data()!;
+      return Branding(
+        title: (d['title'] as String?)?.trim().isNotEmpty == true ? d['title'] as String : 'App',
+        headerText: (d['headerText'] as String?) ?? '',
+        primaryHex: (d['primaryHex'] as String?) ?? '#E91E63',
+        secondaryHex: (d['secondaryHex'] as String?) ?? '#FFB300',
+        logoUrl: d['logoUrl'] as String?,
+      );
+    });
+  }
+
+  Future<void> save(String m, String b, Branding bnd) {
+    return _doc(m, b).set({
+      'title': bnd.title,
+      'headerText': bnd.headerText,
+      'primaryHex': bnd.primaryHex,
+      'secondaryHex': bnd.secondaryHex,
+      'logoUrl': bnd.logoUrl,
+    }, SetOptions(merge: true));
   }
 }

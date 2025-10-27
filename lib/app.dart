@@ -1,5 +1,6 @@
-// lib/app.dart — FINAL: switches to `home:` so UI updates when IDs apply
+// lib/app.dart - CUSTOMER APP (URL PRESERVED)
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/foundation.dart' show debugPrint;
 
@@ -17,75 +18,34 @@ class SweetsApp extends ConsumerStatefulWidget {
 }
 
 class _SweetsAppState extends ConsumerState<SweetsApp> {
-  String? _m;
-  String? _b;
-
-  // Manual subscription so we can listen from initState (Riverpod v3 rule)
-  ProviderSubscription<AsyncValue<({String merchantId, String branchId})?>>? _slugSub;
-
-  void _applyIdsAfterFrame(String m, String b) {
-    if (_m == m && _b == b) return; // already applied
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(merchantIdProvider.notifier).setId(m);
-      ref.read(branchIdProvider.notifier).setId(b);
-      if (mounted) {
-        setState(() {
-          _m = m;
-          _b = b;
-        });
-      }
-      debugPrint('Applied IDs => m=$m b=$b');
-    });
-  }
+  bool _idsApplied = false;
 
   @override
   void initState() {
     super.initState();
-
-    final cfg = ref.read(appConfigProvider);
-    debugPrint('AppConfig => $cfg');
-
-    // 1) Apply explicit IDs if provided (?m=&b=)
-    if (cfg.merchantId != null && cfg.branchId != null) {
-      _applyIdsAfterFrame(cfg.merchantId!, cfg.branchId!);
-    }
-
-    // 2) Otherwise resolve /slugs/<slug>
-    _slugSub = ref.listenManual(
-      slugLookupProvider,
-      (prev, next) {
-        next.when(
-          data: (mb) {
-            if (mb != null) {
-              _applyIdsAfterFrame(mb.merchantId, mb.branchId);
-            } else {
-              final s = cfg.slug ?? '';
-              debugPrint('Slug "$s" not found or invalid.');
-              if (mounted && _m == null && _b == null) setState(() {});
-            }
-          },
-          loading: () {},
-          error: (e, st) {
-            debugPrint('Slug lookup error: $e');
-            if (mounted) setState(() {});
-          },
-        );
-      },
-    );
-
-    // Kick the FutureProvider right away
-    ref.read(slugLookupProvider);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _tryApplyIds());
   }
 
-  @override
-  void dispose() {
-    _slugSub?.close();
-    super.dispose();
+  void _tryApplyIds() {
+    final ids = ref.read(effectiveIdsProvider);
+    if (ids != null && !_idsApplied) {
+      debugPrint('🔵 Customer App: Applying IDs m=${ids.merchantId} b=${ids.branchId}');
+      ref.read(merchantIdProvider.notifier).setId(ids.merchantId);
+      ref.read(branchIdProvider.notifier).setId(ids.branchId);
+      setState(() => _idsApplied = true);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = ref.watch(themeDataProvider);
+    // react to ID changes
+    ref.listen<MerchantBranch?>(effectiveIdsProvider, (prev, next) {
+      if (next != null && !_idsApplied) _tryApplyIds();
+    });
+
+    final baseTheme = ref.watch(themeDataProvider);
+
+    // branding (for title + colors)
     final branding = ref.watch(brandingProvider).maybeWhen(
       data: (b) => b,
       orElse: () => const Branding(
@@ -95,29 +55,84 @@ class _SweetsAppState extends ConsumerState<SweetsApp> {
         secondaryHex: '#FFB300',
       ),
     );
+    final primary = _hexToColor(branding.primaryHex);     // BG color ONLY
+    final secondary = _hexToColor(branding.secondaryHex); // TEXT color ONLY
+
+    // status/nav icon color based on BG luminance
+    final overlay = (primary.computeLuminance() > 0.5)
+        ? SystemUiOverlayStyle.dark
+        : SystemUiOverlayStyle.light;
+    SystemChrome.setSystemUIOverlayStyle(overlay.copyWith(
+      statusBarColor: Colors.transparent,
+      systemNavigationBarColor: Colors.transparent,
+    ));
+
+    // global theme: solid background = primary, fonts = secondary, bar = transparent
+    final theme = baseTheme.copyWith(
+      scaffoldBackgroundColor: primary,
+      // Global font + text color
+      textTheme: baseTheme.textTheme.apply(
+        fontFamily: 'YourFont', // ensure added in pubspec
+        bodyColor: secondary,
+        displayColor: secondary,
+        decorationColor: secondary,
+      ),
+      primaryTextTheme: baseTheme.primaryTextTheme.apply(
+        fontFamily: 'YourFont',
+        bodyColor: secondary,
+        displayColor: secondary,
+        decorationColor: secondary,
+      ),
+      appBarTheme: baseTheme.appBarTheme.copyWith(
+        backgroundColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        centerTitle: true,
+        foregroundColor: secondary,        // AppBar text/icons use secondary
+        systemOverlayStyle: overlay,
+      ),
+    );
 
     return MaterialApp(
       title: branding.title,
       debugShowCheckedModeBanner: false,
       theme: theme,
+      onGenerateRoute: (settings) => MaterialPageRoute(
+        settings: settings,
+        builder: (_) => _idsApplied ? const _CustomerScaffold() : const _WaitingOrError(),
+      ),
+    );
+  }
+}
 
-      // Force Flutter to start at "/" even if URL is /s/<slug>
-      // Using `home:` ensures rebuild when _m/_b change.
-      initialRoute: '/',
+class _CustomerScaffold extends ConsumerWidget {
+  const _CustomerScaffold({Key? key}) : super(key: key);
 
-      home: (_m == null || _b == null)
-          ? _WaitingOrError()
-          : Scaffold(
-              backgroundColor: const Color(0xFFF9EFF3),
-              appBar: AppBar(
-                elevation: 0,
-                scrolledUnderElevation: 0,
-                backgroundColor: Colors.transparent,
-                centerTitle: true,
-                title: Text(branding.title, style: AppTheme.scriptTitle),
-              ),
-              body: const _GradientShell(child: SweetsViewport()),
-            ),
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final b = ref.watch(brandingProvider).maybeWhen(
+      data: (x) => x,
+      orElse: () => const Branding(
+        title: 'App',
+        headerText: '',
+        primaryHex: '#E91E63',
+        secondaryHex: '#FFB300',
+      ),
+    );
+    final secondary = _hexToColor(b.secondaryHex);
+
+    return Scaffold(
+      backgroundColor: Theme.of(context).colorScheme.surface, // ensure primaryHex fills background
+      extendBodyBehindAppBar: true,
+      appBar: AppBar(
+        title: Text(
+          b.title,
+          // force AppBar title to secondary (in case your AppTheme sets a color)
+          style: AppTheme.scriptTitle.copyWith(color: secondary),
+        ),
+      ),
+      body: const SweetsViewport(),
     );
   }
 }
@@ -128,44 +143,49 @@ class _WaitingOrError extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final cfg = ref.watch(appConfigProvider);
-    final slug = cfg.slug;
     final async = ref.watch(slugLookupProvider);
 
-    String baseHint;
+    String message;
     if (cfg.merchantId != null && cfg.branchId != null) {
-      baseHint = 'Applying IDs…';
-    } else if (slug != null && slug.isNotEmpty) {
-      baseHint = 'Resolving slug "$slug"…';
+      message = 'Loading menu...';
+    } else if (cfg.slug != null && cfg.slug!.isNotEmpty) {
+      message = async.when(
+        data: (mb) => mb == null
+            ? '❌ Slug "${cfg.slug}" not found.\n\nAsk the merchant for the correct link.'
+            : 'Loading menu...',
+        loading: () => 'Resolving link...',
+        error: (e, _) => '❌ Error: $e',
+      );
     } else {
-      baseHint = 'Open with ?m=<merchantId>&b=<branchId> or /s/<slug>';
+      message = '⚠️ No merchant specified.\n\nOpen with:\n'
+          '• /s/<slug>  (e.g., /s/donuts)\n'
+          '• ?m=<merchantId>&b=<branchId>';
     }
 
-    final text = async.when(
-      data: (mb) => (mb == null && (slug ?? '').isNotEmpty)
-          ? 'Unknown or unregistered slug "$slug".'
-          : baseHint,
-      loading: () => baseHint,
-      error: (e, st) => 'Slug lookup failed: $e',
+    return Scaffold(
+      backgroundColor: Theme.of(context).colorScheme.surface, // ensure primaryHex fills background
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (async.isLoading)
+                const CircularProgressIndicator()
+              else
+                const Icon(Icons.store_outlined, size: 64, color: Colors.black26),
+              const SizedBox(height: 24),
+              Text(message, textAlign: TextAlign.center, style: const TextStyle(fontSize: 16)),
+            ],
+          ),
+        ),
+      ),
     );
-
-    return Scaffold(body: Center(child: Text(text)));
   }
 }
 
-class _GradientShell extends StatelessWidget {
-  final Widget child;
-  const _GradientShell({required this.child, Key? key}) : super(key: key);
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0xFFF9EFF3), Color(0xFFFFF5F8)],
-        ),
-      ),
-      child: SafeArea(top: false, child: child),
-    );
-  }
+Color _hexToColor(String hex) {
+  final s = hex.replaceAll('#', '').trim();
+  final v = int.parse(s.length == 6 ? 'FF$s' : s, radix: 16);
+  return Color(v);
 }

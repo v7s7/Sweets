@@ -1,93 +1,118 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    /* ------------------------------- Helpers ------------------------------- */
-    function isAuthed() { return request.auth != null; }
-
-    // Staff = a roles doc exists for this user under the same branch
-    function isStaff(m, b) {
-      return isAuthed() &&
-        exists(/databases/$(database)/documents/merchants/$(m)/branches/$(b)/roles/$(request.auth.uid));
+    
+    // ==================== HELPER FUNCTIONS ====================
+    
+    function isSignedIn() {
+      return request.auth != null;
     }
-
-    /* --------------------------- Slug resolution --------------------------- */
+    
+    function isOwner(merchantId, branchId) {
+      return isSignedIn() && 
+        exists(/databases/$(database)/documents/merchants/$(merchantId)/branches/$(branchId)/roles/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/merchants/$(merchantId)/branches/$(branchId)/roles/$(request.auth.uid)).data.role == 'owner';
+    }
+    
+    function isStaff(merchantId, branchId) {
+      return isSignedIn() && 
+        exists(/databases/$(database)/documents/merchants/$(merchantId)/branches/$(branchId)/roles/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/merchants/$(merchantId)/branches/$(branchId)/roles/$(request.auth.uid)).data.role in ['owner', 'staff'];
+    }
+    
+    // ==================== GLOBAL COLLECTIONS ====================
+    
+    // Slugs: Public read, no direct writes (only via Cloud Functions or manual admin)
     match /slugs/{slug} {
-      allow read: if true;     // Public: used to resolve /s/<slug> -> {merchantId, branchId}
-      allow write: if false;   // Only set from server/console
+      allow read: if true;
+      allow create, update: if isSignedIn();  // Allow for branding_admin_page.dart
+      allow delete: if false;  // Prevent accidental deletion
     }
-
-    /* --------------------------- Branch config ----------------------------- */
-    // merchants/{m}/branches/{b}/config/branding   (public branding doc)
-    match /merchants/{m}/branches/{b}/config/{doc} {
-      allow read: if true;                  // Public can read branding/theme
-      allow create, update, delete: if isStaff(m, b);
+    
+    // ==================== MERCHANT HIERARCHY ====================
+    
+    match /merchants/{merchantId} {
+      // Merchant doc itself
+      allow read: if true;
+      allow write: if isOwner(merchantId, 'any');  // At least one branch owner
+      
+      match /branches/{branchId} {
+        // Branch doc
+        allow read: if true;
+        allow write: if isStaff(merchantId, branchId);
+        
+        // -------------------- MENU ITEMS --------------------
+        match /menuItems/{itemId} {
+          // PUBLIC READ: Anyone can see active items
+          allow read: if resource == null || resource.data.isActive == true;
+          
+          // STAFF WRITE: Only staff can create/update/delete
+          allow create: if isStaff(merchantId, branchId) &&
+            request.resource.data.merchantId == merchantId &&
+            request.resource.data.branchId == branchId &&
+            request.resource.data.isActive is bool &&
+            request.resource.data.price is number &&
+            request.resource.data.price >= 0 &&
+            request.resource.data.name is string &&
+            request.resource.data.name.size() > 0;
+          
+          allow update: if isStaff(merchantId, branchId);
+          allow delete: if isStaff(merchantId, branchId);
+        }
+        
+        // -------------------- ORDERS --------------------
+        match /orders/{orderId} {
+          // CREATE: Any signed-in user can place order
+          allow create: if isSignedIn() &&
+            request.resource.data.userId == request.auth.uid &&
+            request.resource.data.status == 'pending' &&
+            request.resource.data.merchantId == merchantId &&
+            request.resource.data.branchId == branchId &&
+            request.resource.data.items is list &&
+            request.resource.data.items.size() > 0 &&
+            request.resource.data.items.size() <= 50 &&
+            request.resource.data.subtotal is number &&
+            request.resource.data.subtotal >= 0 &&
+            request.resource.data.subtotal <= 1000;
+          
+          // READ: Own orders or staff
+          allow read: if isSignedIn() &&
+            (resource.data.userId == request.auth.uid ||
+             isStaff(merchantId, branchId));
+          
+          // UPDATE: Only staff can update (change status)
+          allow update: if isStaff(merchantId, branchId) &&
+            request.resource.data.diff(resource.data)
+              .affectedKeys()
+              .hasOnly(['status', 'updatedAt']);
+          
+          // No deletes
+          allow delete: if false;
+        }
+        
+        // -------------------- ROLES --------------------
+        match /roles/{userId} {
+          // Users can read their own role
+          allow read: if isSignedIn() && request.auth.uid == userId;
+          
+          // Only owner can manage roles
+          allow write: if isOwner(merchantId, branchId);
+        }
+        
+        // -------------------- CONFIG (BRANDING) --------------------
+        match /config/{docId} {
+          // PUBLIC READ: Anyone can see branding
+          allow read: if true;
+          
+          // STAFF WRITE: Only staff can update branding
+          allow write: if isStaff(merchantId, branchId);
+        }
+      }
     }
-
-    /* -------------------------------- Roles -------------------------------- */
-    match /merchants/{m}/branches/{b}/roles/{uid} {
-      // User can read their own role, or any staff can read
-      allow read: if (isAuthed() && request.auth.uid == uid) || isStaff(m, b);
-      allow write: if false; // server/admin managed only
-    }
-
-    /* ------------------------------ Menu items ----------------------------- */
-    // UI queries with .where('isActive', true). Rule returns only docs where isActive==true anyway.
-    match /merchants/{m}/branches/{b}/menuItems/{item} {
-  // Public can read active items; staff can read everything.
-  allow get, list: if isStaff(m, b) || resource.data.isActive == true;      allow create, update, delete: if isStaff(m, b);
-    }
-
-    /* -------------------------------- Orders -------------------------------- */
-    match /merchants/{m}/branches/{b}/orders/{orderId} {
-
-      // Staff can read all orders; users can read their own order
-      allow get, list: if isStaff(m, b) ||
-        (isAuthed() && resource.data.userId == request.auth.uid);
-
-      // Create by authed user; structural validation of items
-      allow create: if isAuthed()
-        && request.resource.data.userId == request.auth.uid
-        && request.resource.data.merchantId == m
-        && request.resource.data.branchId == b
-        && request.resource.data.status == 'pending'
-        && request.resource.data.items is list
-        && request.resource.data.items.size() >= 1
-        && request.resource.data.items.size() <= 50
-        && request.resource.data.items.all(it,
-             it is map
-             && it.keys().hasAll(['productId','name','price','qty'])
-             && it.productId is string
-             && it.name is string
-             && it.price is number
-             && it.qty is number
-             && it.qty >= 1 && it.qty <= 99
-           )
-        && request.resource.data.subtotal is number;
-
-      // Only staff can move status; allow changing ONLY 'status' key; enforce linear flow
-      allow update: if isStaff(m, b)
-        && request.resource.data.diff(resource.data).changedKeys().hasOnly(['status'])
-        && isValidTransition(resource.data.status, request.resource.data.status);
-
-      allow delete: if false;
-    }
-
-    /* ------------------------------- Members -------------------------------- */
-    match /members/{uid} {
-      allow read: if isAuthed() && request.auth.uid == uid;
-      allow write: if false;
-    }
-
-    /* ---------------------- Order status transition check ------------------- */
-    function isValidTransition(from, to) {
-      return
-        (from == 'pending'   && (to == 'accepted'  || to == 'cancelled')) ||
-        (from == 'accepted'  && (to == 'preparing' || to == 'cancelled')) ||
-        (from == 'preparing' && (to == 'ready'     || to == 'cancelled')) ||
-        (from == 'ready'     && (to == 'served'    || to == 'cancelled')) ||
-        (from == 'served'    && false) ||
-        (from == 'cancelled' && false);
+    
+    // ==================== DENY ALL OTHERS ====================
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

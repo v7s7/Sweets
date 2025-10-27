@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../sweets/data/sweets_repo.dart';
+import '../../sweets/data/sweets_repo.dart'; // use sweetsStreamProvider
 import '../../sweets/data/sweet.dart';
 import '../state/cart_controller.dart';
 
@@ -19,155 +19,210 @@ class CartSheet extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final cart = ref.watch(cartControllerProvider);
-    final sweets = ref.watch(sweetsRepoProvider);
+    final sweetsAsync = ref.watch(sweetsStreamProvider);
 
-    // Resolve items (skip IDs that no longer exist in repo)
-    final lines = <_CartLine>[];
-    double subtotal = 0.0;
-
-    cart.items.forEach((id, qty) {
-      final Sweet s = sweets.firstWhere(
-        (e) => e.id == id,
-        orElse: () => const Sweet(
-          id: '__missing__',
-          name: 'Item removed',
-          imageAsset: '',
-          calories: 0,
-          protein: 0.0,
-          carbs: 0.0,
-          fat: 0.0,
-          price: 0.0,
-        ),
-      );
-      if (s.id != '__missing__') {
-        lines.add(_CartLine(sweet: s, qty: qty));
-        subtotal += s.price * qty;
-      }
-    });
-
-    return SafeArea(
-      top: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.black12,
-                borderRadius: BorderRadius.circular(4),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                const Text(
-                  'Your Order',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-                ),
-                const Spacer(),
-                Text(
-                  '${cart.totalCount} item${cart.totalCount == 1 ? '' : 's'}',
-                  style: const TextStyle(color: Colors.black54),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-
-            if (lines.isEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 24),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: const [
-                    Icon(Icons.shopping_bag_outlined,
-                        size: 24, color: Colors.black38),
-                    SizedBox(width: 8),
-                    Text('Cart is empty',
-                        style: TextStyle(color: Colors.black54)),
-                  ],
-                ),
-              )
-            else
-              Flexible(
-                child: ListView.separated(
-                  shrinkWrap: true,
-                  itemCount: lines.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 12),
-                  itemBuilder: (context, i) => _CartRow(line: lines[i]),
-                ),
-              ),
-
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                const Text(
-                  'Subtotal',
-                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
-                ),
-                const Spacer(),
-                Text(
-                  subtotal.toStringAsFixed(3), // BHD: 3 decimals
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w800, fontSize: 18),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: lines.isEmpty
-                    ? null
-                    : () async {
-                        final items = lines
-                            .map((l) => OrderItem(
-                                  productId: l.sweet.id,
-                                  name: l.sweet.name,
-                                  price: l.sweet.price,
-                                  qty: l.qty,
-                                ))
-                            .toList();
-
-                        final cfg = ref.read(appConfigProvider);
-                        final table = cfg.qr.table;
-
-                        final service = ref.read(orderServiceProvider);
-                        final order = await service.createOrder(
-                          items: items,
-                          table: table,
-                        );
-
-                        // ignore: use_build_context_synchronously
-                        Navigator.of(context).maybePop();
-                        // ignore: use_build_context_synchronously
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) =>
-                                OrderStatusPage(orderId: order.orderId),
-                          ),
-                        );
-
-                        onConfirm?.call();
-                      },
-                icon: const Icon(Icons.check_circle_outline),
-                label: const Text('Confirm Order'),
-                style: ElevatedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 8),
-          ],
+    return sweetsAsync.when(
+      loading: () => SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: const [
+              SizedBox(height: 12),
+              Center(child: CircularProgressIndicator()),
+              SizedBox(height: 12),
+            ],
+          ),
         ),
       ),
+      error: (e, _) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.black12,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: const [
+                  Text(
+                    'Your Order',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Error loading products.\nPlease try again.',
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
+      data: (sweets) {
+        // Resolve items (skip IDs that no longer exist in repo)
+        final lines = <_CartLine>[];
+        double subtotal = 0.0;
+
+        cart.items.forEach((id, qty) {
+          final Sweet s = sweets.firstWhere(
+            (e) => e.id == id,
+            orElse: () => const Sweet(
+              id: '__missing__',
+              name: 'Item removed',
+              imageAsset: '',
+              calories: 0,
+              protein: 0.0,
+              carbs: 0.0,
+              fat: 0.0,
+              price: 0.0,
+            ),
+          );
+          if (s.id != '__missing__') {
+            lines.add(_CartLine(sweet: s, qty: qty));
+            subtotal += s.price * qty;
+          }
+        });
+
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.black12,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    const Text(
+                      'Your Order',
+                      style:
+                          TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                    ),
+                    const Spacer(),
+                    Text(
+                      '${cart.totalCount} item${cart.totalCount == 1 ? '' : 's'}',
+                      style: const TextStyle(color: Colors.black54),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+
+                if (lines.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 24),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: const [
+                        Icon(Icons.shopping_bag_outlined,
+                            size: 24, color: Colors.black38),
+                        SizedBox(width: 8),
+                        Text('Cart is empty',
+                            style: TextStyle(color: Colors.black54)),
+                      ],
+                    ),
+                  )
+                else
+                  Flexible(
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: lines.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 12),
+                      itemBuilder: (context, i) =>
+                          _CartRow(line: lines[i]),
+                    ),
+                  ),
+
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    const Text(
+                      'Subtotal',
+                      style: TextStyle(
+                          fontWeight: FontWeight.w700, fontSize: 16),
+                    ),
+                    const Spacer(),
+                    Text(
+                      subtotal.toStringAsFixed(3), // BHD: 3 decimals
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w800, fontSize: 18),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: lines.isEmpty
+                        ? null
+                        : () async {
+                            final items = lines
+                                .map((l) => OrderItem(
+                                      productId: l.sweet.id,
+                                      name: l.sweet.name,
+                                      price: l.sweet.price,
+                                      qty: l.qty,
+                                    ))
+                                .toList();
+
+                            final cfg = ref.read(appConfigProvider);
+                            final table = cfg.qr.table;
+
+                            final service = ref.read(orderServiceProvider);
+                            final order = await service.createOrder(
+                              items: items,
+                              table: table,
+                            );
+
+                            // ignore: use_build_context_synchronously
+                            Navigator.of(context).maybePop();
+                            // ignore: use_build_context_synchronously
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) =>
+                                    OrderStatusPage(orderId: order.orderId),
+                              ),
+                            );
+
+                            onConfirm?.call();
+                          },
+                    icon: const Icon(Icons.check_circle_outline),
+                    label: const Text('Confirm Order'),
+                    style: ElevatedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(48),
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -209,8 +264,8 @@ class _CartRow extends ConsumerWidget {
             children: [
               Text(
                 line.sweet.name,
-                style:
-                    const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                style: const TextStyle(
+                    fontWeight: FontWeight.w700, fontSize: 14),
               ),
               const SizedBox(height: 2),
               Text(
@@ -263,7 +318,8 @@ class _CartRow extends ConsumerWidget {
   /// Small 56x56 thumbnail that supports either assets or full URLs.
   Widget _thumb(String src) {
     if (src.isEmpty) {
-      return const Icon(Icons.image_not_supported_outlined, color: Colors.black26);
+      return const Icon(Icons.image_not_supported_outlined,
+          color: Colors.black26);
     }
 
     if (_looksLikeNetwork(src)) {
