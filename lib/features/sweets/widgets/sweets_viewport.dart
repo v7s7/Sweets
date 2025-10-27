@@ -2,7 +2,6 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../cart/widgets/cart_sheet.dart';
 import '../../sweets/data/sweets_repo.dart'; // exposes sweetsStreamProvider
 import '../../sweets/data/sweet.dart';
 import '../../sweets/state/sweets_controller.dart';
@@ -10,10 +9,10 @@ import '../../../core/utils/haptics.dart';
 import '../../cart/state/cart_controller.dart';
 import 'sweet_image.dart';
 import 'nutrition_panel.dart';
-import '../../cart/widgets/cart_badge.dart';
 
 class SweetsViewport extends ConsumerStatefulWidget {
-  const SweetsViewport({super.key});
+  final GlobalKey cartBadgeKey; // AppBar cart button key for fly animation end
+  const SweetsViewport({super.key, required this.cartBadgeKey});
 
   @override
   ConsumerState<SweetsViewport> createState() => _SweetsViewportState();
@@ -31,23 +30,9 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
   int _qty = 1;
 
   final GlobalKey _activeImageKey = GlobalKey();
-  final GlobalKey _cartBadgeKey = GlobalKey();
   OverlayEntry? _flyEntry;
 
   ProviderSubscription<AsyncValue<List<Sweet>>>? _sweetsSub;
-
-  void _openCartSheet() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => const CartSheet(),
-    );
-  }
 
   @override
   void initState() {
@@ -258,16 +243,7 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                   ),
                 ),
 
-                // 5) Cart badge (TOPMOST so it receives taps)
-                Positioned(
-                  top: 10,
-                  right: 12,
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: _openCartSheet,
-                    child: CartBadge(hostKey: _cartBadgeKey),
-                  ),
-                ),
+                // NOTE: Removed the body-layer cart badge that sat under the AppBar and swallowed taps.
               ],
             ),
           ),
@@ -318,7 +294,7 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
     if (overlay == null || !mounted) return;
 
     final start = _centerOfKey(_activeImageKey);
-    final end = _centerOfKey(_cartBadgeKey);
+    final end = _centerOfKey(widget.cartBadgeKey); // <- AppBar button key
     if (start == null || end == null) return;
 
     // Remove any existing entry before starting a new animation
@@ -484,26 +460,20 @@ class _AddIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: onSurface.withOpacity(0.06),
-        shape: BoxShape.circle,
-        boxShadow: const [
-          BoxShadow(color: Color(0x22000000), blurRadius: 14, offset: Offset(0, 8)),
-        ],
-        border: Border.all(color: onSurface.withOpacity(0.18)),
-      ),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          customBorder: const CircleBorder(),
-          onTap: onTap,
-          child: SizedBox(
-            width: 44,
-            height: 44,
-            child: Icon(Icons.shopping_bag_outlined, size: 22, color: onSurface),
-          ),
+    // Outline-only circular button; icon + border use the same color (secondary/onSurface)
+    return Semantics(
+      button: true,
+      label: 'Add to cart',
+      child: OutlinedButton(
+        style: OutlinedButton.styleFrom(
+          shape: const CircleBorder(),
+          side: BorderSide(color: onSurface),
+          minimumSize: const Size(48, 48),
+          padding: EdgeInsets.zero,
+          foregroundColor: onSurface, // icon color
         ),
+        onPressed: onTap,
+        child: const Icon(Icons.shopping_bag_outlined, size: 22),
       ),
     );
   }

@@ -95,6 +95,8 @@ class CartSheet extends ConsumerWidget {
           }
         });
 
+        final onSurface = Theme.of(context).colorScheme.onSurface;
+
         return SafeArea(
           top: false,
           child: Padding(
@@ -121,7 +123,7 @@ class CartSheet extends ConsumerWidget {
                     const Spacer(),
                     Text(
                       '${cart.totalCount} item${cart.totalCount == 1 ? '' : 's'}',
-                      style: const TextStyle(color: Colors.black54),
+                      style: TextStyle(color: onSurface.withOpacity(0.6)),
                     ),
                   ],
                 ),
@@ -132,12 +134,13 @@ class CartSheet extends ConsumerWidget {
                     padding: const EdgeInsets.symmetric(vertical: 24),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
-                      children: const [
+                      children: [
                         Icon(Icons.shopping_bag_outlined,
-                            size: 24, color: Colors.black38),
-                        SizedBox(width: 8),
+                            size: 24, color: onSurface.withOpacity(0.5)),
+                        const SizedBox(width: 8),
                         Text('Cart is empty',
-                            style: TextStyle(color: Colors.black54)),
+                            style:
+                                TextStyle(color: onSurface.withOpacity(0.6))),
                       ],
                     ),
                   )
@@ -147,8 +150,7 @@ class CartSheet extends ConsumerWidget {
                       shrinkWrap: true,
                       itemCount: lines.length,
                       separatorBuilder: (_, __) => const SizedBox(height: 12),
-                      itemBuilder: (context, i) =>
-                          _CartRow(line: lines[i]),
+                      itemBuilder: (context, i) => _CartRow(line: lines[i]),
                     ),
                   ),
 
@@ -163,8 +165,11 @@ class CartSheet extends ConsumerWidget {
                     const Spacer(),
                     Text(
                       subtotal.toStringAsFixed(3), // BHD: 3 decimals
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w800, fontSize: 18),
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 18,
+                        color: onSurface, // use secondary/onSurface
+                      ),
                     ),
                   ],
                 ),
@@ -241,6 +246,7 @@ class _CartRow extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final cart = ref.watch(cartControllerProvider);
     final qty = cart.qtyFor(line.sweet.id);
+    final onSurface = Theme.of(context).colorScheme.onSurface;
 
     // Image path/URL (null-safe + decode any % encodings)
     final img = _cleanSrc(line.sweet.imageAsset);
@@ -248,12 +254,12 @@ class _CartRow extends ConsumerWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: Container(
-            color: const Color(0xFFF3F3F3),
-            width: 56,
-            height: 56,
+        // Transparent PNG-friendly thumb (no background fill)
+        SizedBox(
+          width: 56,
+          height: 56,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(10),
             child: _thumb(img),
           ),
         ),
@@ -268,9 +274,10 @@ class _CartRow extends ConsumerWidget {
                     fontWeight: FontWeight.w700, fontSize: 14),
               ),
               const SizedBox(height: 2),
+              // Price uses secondary/onSurface color
               Text(
                 line.sweet.price.toStringAsFixed(3),
-                style: const TextStyle(color: Colors.black54),
+                style: TextStyle(color: onSurface),
               ),
             ],
           ),
@@ -316,20 +323,19 @@ class _CartRow extends ConsumerWidget {
   }
 
   /// Small 56x56 thumbnail that supports either assets or full URLs.
+  /// Uses BoxFit.contain to preserve PNG transparency.
   Widget _thumb(String src) {
     if (src.isEmpty) {
-      return const Icon(Icons.image_not_supported_outlined,
-          color: Colors.black26);
+      return const SizedBox.shrink();
     }
 
     if (_looksLikeNetwork(src)) {
       return Image.network(
         src,
-        fit: BoxFit.cover,
-        filterQuality: FilterQuality.medium,
+        fit: BoxFit.contain,
+        filterQuality: FilterQuality.high,
         gaplessPlayback: true,
-        errorBuilder: (_, __, ___) =>
-            const Icon(Icons.broken_image_outlined, color: Colors.black26),
+        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
         loadingBuilder: (c, child, progress) =>
             progress == null ? child : const Center(child: CircularProgressIndicator(strokeWidth: 2)),
       );
@@ -337,11 +343,10 @@ class _CartRow extends ConsumerWidget {
 
     return Image.asset(
       src,
-      fit: BoxFit.cover,
-      filterQuality: FilterQuality.medium,
+      fit: BoxFit.contain,
+      filterQuality: FilterQuality.high,
       gaplessPlayback: true,
-      errorBuilder: (_, __, ___) =>
-          const Icon(Icons.broken_image_outlined, color: Colors.black26),
+      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
     );
   }
 }
@@ -361,44 +366,39 @@ class _QtyChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final onSurface = Theme.of(context).colorScheme.onSurface;
+
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Colors.black.withOpacity(0.30), // neutral dark overlay
         borderRadius: BorderRadius.circular(24),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x14000000),
-            blurRadius: 8,
-            offset: Offset(0, 4),
-          )
-        ],
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _iconBtn(Icons.remove_rounded, onDec),
+          _iconBtn(Icons.remove_rounded, onDec, onSurface),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             child: Text(
               qty.toString().padLeft(2, '0'),
-              style: const TextStyle(fontWeight: FontWeight.w700),
+              style: TextStyle(fontWeight: FontWeight.w700, color: onSurface),
             ),
           ),
-          _iconBtn(Icons.add_rounded, onInc),
+          _iconBtn(Icons.add_rounded, onInc, onSurface),
           const SizedBox(width: 6),
-          _iconBtn(Icons.delete_outline, onRemove),
+          _iconBtn(Icons.delete_outline, onRemove, onSurface),
         ],
       ),
     );
   }
 
-  Widget _iconBtn(IconData icon, VoidCallback onTap) {
+  Widget _iconBtn(IconData icon, VoidCallback onTap, Color onSurface) {
     return InkWell(
       borderRadius: BorderRadius.circular(24),
       onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.all(8.0),
-        child: Icon(icon, size: 20),
+        child: Icon(icon, size: 20, color: onSurface),
       ),
     );
   }

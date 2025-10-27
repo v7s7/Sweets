@@ -19,8 +19,8 @@ class Branding {
   factory Branding.fromMap(Map<String, dynamic> m) => Branding(
         title: m['title'] ?? 'App',
         headerText: m['headerText'] ?? '',
-        primaryHex: m['primaryHex'] ?? '#E91E63',
-        secondaryHex: m['secondaryHex'] ?? '#FFB300',
+        primaryHex: m['primaryHex'] ?? '#FFFFFF',
+        secondaryHex: m['secondaryHex'] ?? '#000000',
         logoUrl: (m['logoUrl'] as String?)?.trim(),
       );
 

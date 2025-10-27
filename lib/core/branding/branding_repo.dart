@@ -23,16 +23,16 @@ class BrandingRepo {
         return const Branding(
           title: 'App',
           headerText: '',
-          primaryHex: '#E91E63',
-          secondaryHex: '#FFB300',
+          primaryHex: '#FFFFFF',
+          secondaryHex: '#000000',
         );
       }
       final d = snap.data()!;
       return Branding(
         title: (d['title'] as String?)?.trim().isNotEmpty == true ? d['title'] as String : 'App',
         headerText: (d['headerText'] as String?) ?? '',
-        primaryHex: (d['primaryHex'] as String?) ?? '#E91E63',
-        secondaryHex: (d['secondaryHex'] as String?) ?? '#FFB300',
+        primaryHex: (d['primaryHex'] as String?) ?? '#FFFFFF',
+        secondaryHex: (d['secondaryHex'] as String?) ?? '#000000',
         logoUrl: d['logoUrl'] as String?,
       );
     });
