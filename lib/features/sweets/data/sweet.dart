@@ -8,6 +8,10 @@ class Sweet {
   /// Prefer `imageUrl` when present (merchant-provided network image).
   final String? imageUrl;
 
+  /// Category links (flat tree). May be null if not assigned.
+  final String? categoryId;
+  final String? subcategoryId;
+
   /// Optional local fallback used by the demo (e.g. assets/sweets/donut.png).
   final String? imageAsset;
 
@@ -26,6 +30,8 @@ class Sweet {
     required this.name,
     required this.price,
     this.imageUrl,
+    this.categoryId,
+    this.subcategoryId,
     this.imageAsset,
     this.calories,
     this.protein,
@@ -55,14 +61,19 @@ class Sweet {
       return double.tryParse(v.toString());
     }
 
+    String? _toStringNullable(dynamic v) {
+      final s = (v as String?)?.trim();
+      return (s == null || s.isEmpty) ? null : s;
+    }
+
     return Sweet(
       id: id,
       name: (m['name'] ?? '').toString(),
       price: _toDouble(m['price']),
-      imageUrl: (m['imageUrl'] as String?)?.trim().isEmpty == true
-          ? null
-          : m['imageUrl'] as String?,
-      imageAsset: m['imageAsset'] as String?,
+      imageUrl: _toStringNullable(m['imageUrl']),
+      categoryId: _toStringNullable(m['categoryId']),
+      subcategoryId: _toStringNullable(m['subcategoryId']),
+      imageAsset: _toStringNullable(m['imageAsset']),
       calories: _toIntNullable(m['calories']),
       protein: _toDoubleNullable(m['protein']),
       carbs: _toDoubleNullable(m['carbs']),
@@ -75,6 +86,8 @@ class Sweet {
         'name': name,
         'price': price,
         'imageUrl': imageUrl,
+        'categoryId': categoryId,
+        'subcategoryId': subcategoryId,
         'imageAsset': imageAsset,
         'calories': calories,
         'protein': protein,
@@ -87,6 +100,8 @@ class Sweet {
     String? id,
     String? name,
     String? imageUrl,
+    String? categoryId,
+    String? subcategoryId,
     String? imageAsset,
     int? calories,
     double? protein,
@@ -99,6 +114,8 @@ class Sweet {
       id: id ?? this.id,
       name: name ?? this.name,
       imageUrl: imageUrl ?? this.imageUrl,
+      categoryId: categoryId ?? this.categoryId,
+      subcategoryId: subcategoryId ?? this.subcategoryId,
       imageAsset: imageAsset ?? this.imageAsset,
       calories: calories ?? this.calories,
       protein: protein ?? this.protein,

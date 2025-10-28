@@ -7,7 +7,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:http/http.dart' as http;
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:sweets_app/features/categories/screens/category_admin_page.dart';
 import '../../core/branding/branding_admin_page.dart';
 
 /// Merchant product manager (Cloudinary + Firestore).
@@ -69,6 +71,13 @@ class ProductsScreen extends StatelessWidget {
                 icon: const Icon(Icons.palette_outlined),
               ),
               IconButton(
+                tooltip: 'Categories',
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const CategoryAdminPage()),
+                ),
+                icon: const Icon(Icons.category_outlined),
+              ),
+              IconButton(
                 tooltip: 'Sign out',
                 onPressed: () => FirebaseAuth.instance.signOut(),
                 icon: const Icon(Icons.logout),
@@ -108,13 +117,10 @@ class ProductsScreen extends StatelessWidget {
                   final d = docs[i];
                   final v = d.data();
 
-                  // Robust price formatting (BHD → 3dp)
                   final double price = _asDouble(v['price']);
                   final String priceStr = price.toStringAsFixed(3);
-
                   final String name = (v['name'] ?? d.id).toString();
                   final String imageUrl = (v['imageUrl'] ?? '').toString();
-
                   final String kcal = (v['calories']?.toString() ?? '').trim();
                   final subtitle = kcal.isNotEmpty
                       ? 'BHD $priceStr • $kcal kcal'
@@ -126,8 +132,7 @@ class ProductsScreen extends StatelessWidget {
                     subtitle: Text(subtitle),
                     trailing: IconButton(
                       icon: const Icon(Icons.edit),
-                      onPressed: () =>
-                          _openEditor(context, merchantId, branchId, d),
+                      onPressed: () => _openEditor(context, merchantId, branchId, d),
                     ),
                   );
                 },
@@ -145,15 +150,17 @@ class ProductsScreen extends StatelessWidget {
     String b,
     QueryDocumentSnapshot<Map<String, dynamic>>? doc,
   ) async {
-    await showModalBottomSheet(
+    await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Theme.of(context).colorScheme.surface,
-      builder: (_) => ProductEditorSheet(
-        merchantId: m,
-        branchId: b,
-        existing: doc,
-      ),
+      builder: (context) {
+        return ProductEditorSheet(
+          merchantId: m,
+          branchId: b,
+          existing: doc,
+        );
+      },
     );
   }
 }
@@ -189,7 +196,7 @@ class _ProductThumb extends StatelessWidget {
   }
 }
 
-class ProductEditorSheet extends StatefulWidget {
+class ProductEditorSheet extends ConsumerStatefulWidget {
   final String merchantId;
   final String branchId;
   final QueryDocumentSnapshot<Map<String, dynamic>>? existing;
@@ -201,10 +208,10 @@ class ProductEditorSheet extends StatefulWidget {
   });
 
   @override
-  State<ProductEditorSheet> createState() => _ProductEditorSheetState();
+  ConsumerState<ProductEditorSheet> createState() => _ProductEditorSheetState();
 }
 
-class _ProductEditorSheetState extends State<ProductEditorSheet> {
+class _ProductEditorSheetState extends ConsumerState<ProductEditorSheet> {
   final _name = TextEditingController();
   final _price = TextEditingController();
   final _cal = TextEditingController();
@@ -216,6 +223,11 @@ class _ProductEditorSheetState extends State<ProductEditorSheet> {
 
   String? _imageUrl;
   bool _busy = false;
+
+  // Category selection
+  String? _topCatId;   // parentId == null
+  String? _subCatId;   // parentId == _topCatId
+  bool _catInitDone = false;
 
   // Defaults to your account values; can be overridden with --dart-define.
   static const _cloudName =
@@ -237,7 +249,19 @@ class _ProductEditorSheetState extends State<ProductEditorSheet> {
       _sugar.text = (v['sugar'] ?? '').toString();
       _tags.text = (v['tags'] is List ? (v['tags'] as List).join(', ') : '');
       _imageUrl = v['imageUrl']?.toString();
+      // categoryId will be wired after categories are loaded
     }
+  }
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> _catsStream() {
+    return FirebaseFirestore.instance
+        .collection('merchants').doc(widget.merchantId)
+        .collection('branches').doc(widget.branchId)
+        .collection('categories')
+        .where('isActive', isEqualTo: true)
+        .orderBy('parentId')
+        .orderBy('sort')
+        .snapshots();
   }
 
   Future<void> _pickAndUpload() async {
@@ -305,8 +329,11 @@ class _ProductEditorSheetState extends State<ProductEditorSheet> {
       double price = _asDouble(_price.text.trim());
       price = double.parse(price.toStringAsFixed(3));
 
+      // decide category: prefer leaf (sub) else top
+      final String? categoryId = _subCatId ?? _topCatId;
+
       final data = {
-        'merchantId': widget.merchantId, // helpful for collectionGroup queries
+        'merchantId': widget.merchantId,
         'branchId': widget.branchId,
         'name': _name.text.trim(),
         'price': price,
@@ -321,6 +348,7 @@ class _ProductEditorSheetState extends State<ProductEditorSheet> {
             .map((s) => s.trim())
             .where((s) => s.isNotEmpty)
             .toList(),
+        'categoryId': categoryId, // <-- key piece
         'isActive': true,
         'sort': (widget.existing?.data()['sort'] as num?) ?? 0,
         'updatedAt': FieldValue.serverTimestamp(),
@@ -404,6 +432,100 @@ class _ProductEditorSheetState extends State<ProductEditorSheet> {
                 ],
               ),
               const SizedBox(height: 8),
+
+              // ---------- Category pickers ----------
+              StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                stream: _catsStream(),
+                builder: (context, snap) {
+                  if (snap.connectionState == ConnectionState.waiting) {
+                    return const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 12),
+                      child: LinearProgressIndicator(),
+                    );
+                  }
+                  if (snap.hasError) {
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      child: Text('Failed to load categories: ${snap.error}'),
+                    );
+                  }
+                  final docs = snap.data?.docs ?? const [];
+                  final all = [
+                    for (final d in docs)
+                      {
+                        'id': d.id,
+                        ...d.data(),
+                      }
+                  ];
+                  // map by id for lookups
+                  final byId = {for (final c in all) c['id'] as String: c};
+                  final tops = all.where((c) => c['parentId'] == null).toList()
+                    ..sort((a, b) => (a['sort'] as num).compareTo(b['sort'] as num));
+                  final subs = all
+                      .where((c) => c['parentId'] == _topCatId)
+                      .toList()
+                    ..sort((a, b) => (a['sort'] as num).compareTo(b['sort'] as num));
+
+                  // Initialize from existing.categoryId once
+                  if (!_catInitDone && widget.existing != null) {
+                    final existingCatId = widget.existing!.data()['categoryId'] as String?;
+                    if (existingCatId != null && byId.containsKey(existingCatId)) {
+                      final cat = byId[existingCatId]!;
+                      final parentId = cat['parentId'] as String?;
+                      if (parentId == null) {
+                        _topCatId = existingCatId;
+                        _subCatId = null;
+                      } else {
+                        _topCatId = parentId;
+                        _subCatId = existingCatId;
+                      }
+                    }
+                    _catInitDone = true;
+                  }
+
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      DropdownButtonFormField<String>(
+                        value: _topCatId,
+                        items: [
+                          for (final c in tops)
+                            DropdownMenuItem(
+                              value: c['id'] as String,
+                              child: Text((c['name'] ?? c['id']).toString()),
+                            ),
+                        ],
+                        onChanged: (v) {
+                          setState(() {
+                            _topCatId = v;
+                            _subCatId = null; // reset sub on top change
+                          });
+                        },
+                        decoration: const InputDecoration(
+                          labelText: 'Category',
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      DropdownButtonFormField<String>(
+                        value: _subCatId,
+                        items: [
+                          for (final c in subs)
+                            DropdownMenuItem(
+                              value: c['id'] as String,
+                              child: Text((c['name'] ?? c['id']).toString()),
+                            ),
+                        ],
+                        onChanged: (v) => setState(() => _subCatId = v),
+                        decoration: const InputDecoration(
+                          labelText: 'Subcategory (optional)',
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+
+              const SizedBox(height: 12),
               Wrap(
                 runSpacing: 8,
                 spacing: 12,

@@ -2,7 +2,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter/foundation.dart' show debugPrint;
 
 import 'core/theme/app_theme.dart';
 import 'core/branding/branding_providers.dart';
@@ -14,7 +13,7 @@ import 'features/cart/widgets/cart_sheet.dart';
 import 'features/cart/state/cart_controller.dart'; // for live cart count
 
 class SweetsApp extends ConsumerStatefulWidget {
-  const SweetsApp({Key? key}) : super(key: key);
+  const SweetsApp({super.key});
   @override
   ConsumerState<SweetsApp> createState() => _SweetsAppState();
 }
@@ -57,7 +56,7 @@ class _SweetsAppState extends ConsumerState<SweetsApp> {
         secondaryHex: '#000000',
       ),
     );
-    final primary = _hexToColor(branding.primaryHex);     // BG color ONLY
+    final primary = _hexToColor(branding.primaryHex); // BG color ONLY
     final secondary = _hexToColor(branding.secondaryHex); // TEXT color ONLY
 
     // status/nav icon color based on BG luminance
@@ -72,7 +71,6 @@ class _SweetsAppState extends ConsumerState<SweetsApp> {
     // global theme: solid background = primary, fonts = secondary, bar = transparent
     final theme = baseTheme.copyWith(
       scaffoldBackgroundColor: primary,
-      // Global font + text color
       textTheme: baseTheme.textTheme.apply(
         fontFamily: 'YourFont', // ensure added in pubspec
         bodyColor: secondary,
@@ -91,7 +89,7 @@ class _SweetsAppState extends ConsumerState<SweetsApp> {
         elevation: 0,
         scrolledUnderElevation: 0,
         centerTitle: true,
-        foregroundColor: secondary,        // AppBar text/icons use secondary
+        foregroundColor: secondary, // AppBar text/icons use secondary
         systemOverlayStyle: overlay,
       ),
     );
@@ -110,7 +108,7 @@ class _SweetsAppState extends ConsumerState<SweetsApp> {
 
 // Stateful so we can hold a GlobalKey for the AppBar cart button
 class _CustomerScaffold extends ConsumerStatefulWidget {
-  const _CustomerScaffold({Key? key}) : super(key: key);
+  const _CustomerScaffold({super.key});
   @override
   ConsumerState<_CustomerScaffold> createState() => _CustomerScaffoldState();
 }
@@ -119,7 +117,7 @@ class _CustomerScaffoldState extends ConsumerState<_CustomerScaffold> {
   // Shared with SweetsViewport for fly-to-cart target
   final GlobalKey _cartActionKey = GlobalKey();
 
-  void _openCartSheet() {
+  void _openCartSheet(BuildContext context) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -128,7 +126,7 @@ class _CustomerScaffoldState extends ConsumerState<_CustomerScaffold> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (_) => const CartSheet(),
+      builder: (context) => const CartSheet(),
     );
   }
 
@@ -150,10 +148,10 @@ class _CustomerScaffoldState extends ConsumerState<_CustomerScaffold> {
     );
 
     return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.surface, // ensure primaryHex fills background
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       extendBodyBehindAppBar: true,
       appBar: AppBar(
-        automaticallyImplyLeading: false, // hides the back arrow
+        automaticallyImplyLeading: false, // hides back arrow
         title: Text(
           b.title,
           style: AppTheme.scriptTitle.copyWith(color: onSurface),
@@ -173,7 +171,7 @@ class _CustomerScaffoldState extends ConsumerState<_CustomerScaffold> {
                     padding: EdgeInsets.zero,
                     foregroundColor: onSurface, // icon color
                   ),
-                  onPressed: _openCartSheet,
+                  onPressed: () => _openCartSheet(context),
                   child: const Icon(Icons.shopping_bag_outlined, size: 18),
                 ),
                 if (cartCount > 0)
@@ -196,7 +194,7 @@ class _CustomerScaffoldState extends ConsumerState<_CustomerScaffold> {
 }
 
 class _WaitingOrError extends ConsumerWidget {
-  const _WaitingOrError({Key? key}) : super(key: key);
+  const _WaitingOrError({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -221,7 +219,7 @@ class _WaitingOrError extends ConsumerWidget {
     }
 
     return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.surface, // ensure primaryHex fills background
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: Center(
         child: Padding(
           padding: const EdgeInsets.all(32),
@@ -245,7 +243,7 @@ class _WaitingOrError extends ConsumerWidget {
 class _CartCountBadge extends StatelessWidget {
   final int count;
   final Color onSurface;
-  const _CartCountBadge({required this.count, required this.onSurface});
+  const _CartCountBadge({super.key, required this.count, required this.onSurface});
 
   @override
   Widget build(BuildContext context) {
@@ -253,14 +251,14 @@ class _CartCountBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.30),   // neutral dark overlay
+        color: Colors.black.withValues(alpha: 0.30), // neutral dark overlay
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: onSurface.withOpacity(0.6)),
+        border: Border.all(color: onSurface.withValues(alpha: 0.6)),
       ),
       child: Text(
         text,
         style: TextStyle(
-          color: onSurface,                      // secondary/onSurface
+          color: onSurface, // secondary/onSurface
           fontSize: 10,
           fontWeight: FontWeight.w800,
         ),

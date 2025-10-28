@@ -1,14 +1,18 @@
+// lib/features/sweets/widgets/sweets_viewport.dart
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../sweets/data/sweets_repo.dart'; // exposes sweetsStreamProvider
+import '../../sweets/data/sweets_repo.dart'; // sweetsStreamProvider
 import '../../sweets/data/sweet.dart';
 import '../../sweets/state/sweets_controller.dart';
 import '../../../core/utils/haptics.dart';
 import '../../cart/state/cart_controller.dart';
 import 'sweet_image.dart';
 import 'nutrition_panel.dart';
+import 'category_bar.dart';
+import '../../categories/data/categories_repo.dart'; // categoriesStreamProvider
+import '../../categories/data/category.dart'; // <-- ensure Category is in scope
 
 class SweetsViewport extends ConsumerStatefulWidget {
   final GlobalKey cartBadgeKey; // AppBar cart button key for fly animation end
@@ -92,6 +96,7 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
   @override
   Widget build(BuildContext context) {
     final sweetsAsync = ref.watch(sweetsStreamProvider);
+    final catsAsync = ref.watch(categoriesStreamProvider);
 
     return sweetsAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -101,155 +106,212 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
           textAlign: TextAlign.center,
         ),
       ),
-      data: (sweets) {
-        if (sweets.isEmpty) {
-          return const Center(child: Text('No products yet.'));
+      data: (allSweets) {
+        final onSurface = Theme.of(context).colorScheme.onSurface;
+
+        // Strongly type to avoid nullable-element inference from `const []`.
+        final List<Category> cats = catsAsync.value ?? <Category>[];
+        final selCat = ref.watch(selectedCategoryIdProvider);
+        final selSub = ref.watch(selectedSubcategoryIdProvider);
+
+        final filtered = _filterByCategory(allSweets, cats, selCat, selSub);
+
+        if (filtered.isEmpty) {
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CategoryBar(),
+              const SizedBox(height: 24),
+              Text('No products in this category.',
+                  style: TextStyle(color: onSurface)),
+            ],
+          );
         }
 
+        // Keep index in range after filtering
         final state = ref.watch(sweetsControllerProvider);
-        final current = sweets[state.index % sweets.length];
+        final safeIndex = state.index % filtered.length;
+        if (safeIndex != state.index) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              ref.read(sweetsControllerProvider.notifier).setIndex(safeIndex);
+            }
+          });
+        }
+        final current = filtered[safeIndex];
 
         final total = (current.price * _qty);
         final size = MediaQuery.of(context).size;
-        final onSurface = Theme.of(context).colorScheme.onSurface;
         final surface = Theme.of(context).colorScheme.surface;
 
         // Enforce global text/icon color for this screen too.
         return DefaultTextStyle.merge(
-          style: Theme.of(context).textTheme.bodyMedium!.copyWith(color: onSurface),
+          style:
+              Theme.of(context).textTheme.bodyMedium!.copyWith(color: onSurface),
           child: IconTheme(
             data: IconThemeData(color: onSurface),
-            child: Stack(
-              clipBehavior: Clip.none,
+            child: Column(
               children: [
-                // 1) Carousel with 15/70/15 peeks; disable scroll while detail open
-                PageView.builder(
-                  controller: _pc,
-                  padEnds: true,
-                  clipBehavior: Clip.none,
-                  pageSnapping: true,
-                  physics: state.isDetailOpen
-                      ? const NeverScrollableScrollPhysics()
-                      : const BouncingScrollPhysics(),
-                  onPageChanged: (i) {
-                    ref
-                        .read(sweetsControllerProvider.notifier)
-                        .setIndex((i % sweets.length).toInt());
-                    setState(() => _qty = 1);
-                  },
-                  itemBuilder: (ctx, i) {
-                    final sweet = sweets[i % sweets.length];
-                    return _buildPageItem(context, sweet, i, state);
-                  },
-                ),
-
-                // 2) Mask RIGHT HALF when detail is open so the next item doesn't peek
-                if (state.isDetailOpen)
-                  Positioned(
-                    top: 0,
-                    bottom: 0,
-                    right: 0,
-                    width: size.width * 0.5,
-                    child: IgnorePointer(
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(color: surface),
+                const CategoryBar(),
+                Expanded(
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      // 1) Carousel with 15/70/15 peeks; disable scroll while detail open
+                      PageView.builder(
+                        controller: _pc,
+                        padEnds: true,
+                        clipBehavior: Clip.none,
+                        pageSnapping: true,
+                        physics: state.isDetailOpen
+                            ? const NeverScrollableScrollPhysics()
+                            : const BouncingScrollPhysics(),
+                        onPageChanged: (i) {
+                          ref
+                              .read(sweetsControllerProvider.notifier)
+                              .setIndex((i % filtered.length).toInt());
+                          setState(() => _qty = 1);
+                        },
+                        itemBuilder: (ctx, i) {
+                          final sweet = filtered[i % filtered.length];
+                          return _buildPageItem(context, sweet, i, state);
+                        },
                       ),
-                    ),
-                  ),
 
-                // 3) Name, price, counter, and add button — right under the hero
-                Align(
-                  alignment: const Alignment(0, 0.78),
-                  child: IgnorePointer(
-                    ignoring: state.isDetailOpen,
-                    child: AnimatedOpacity(
-                      opacity: state.isDetailOpen ? 0 : 1,
-                      duration: const Duration(milliseconds: 180),
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 520),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            // Name (bold, centered) — explicitly use onSurface
-                            AnimatedSwitcher(
-                              duration: const Duration(milliseconds: 180),
-                              transitionBuilder: (c, a) => FadeTransition(
-                                opacity: a,
-                                child: ScaleTransition(scale: a, child: c),
-                              ),
-                              child: Text(
-                                current.name,
-                                key: ValueKey(current.id),
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .titleMedium
-                                    ?.copyWith(
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 16,
-                                      color: onSurface,
+                      // 2) Mask RIGHT HALF when detail is open so the next item doesn't peek
+                      if (state.isDetailOpen)
+                        Positioned(
+                          top: 0,
+                          bottom: 0,
+                          right: 0,
+                          width: size.width * 0.5,
+                          child: IgnorePointer(
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(color: surface),
+                            ),
+                          ),
+                        ),
+
+                      // 3) Name, price, counter, and add button — right under the hero
+                      Align(
+                        alignment: const Alignment(0, 0.78),
+                        child: IgnorePointer(
+                          ignoring: state.isDetailOpen,
+                          child: AnimatedOpacity(
+                            opacity: state.isDetailOpen ? 0 : 1,
+                            duration: const Duration(milliseconds: 180),
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 520),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  // Name (bold, centered)
+                                  AnimatedSwitcher(
+                                    duration:
+                                        const Duration(milliseconds: 180),
+                                    transitionBuilder: (c, a) => FadeTransition(
+                                      opacity: a,
+                                      child: ScaleTransition(
+                                          scale: a, child: c),
                                     ),
+                                    child: Text(
+                                      current.name,
+                                      key: ValueKey(current.id),
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleMedium
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 16,
+                                            color: onSurface,
+                                          ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+
+                                  // Price (updates with qty) + counter + compact add button
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Text(
+                                        total.toStringAsFixed(3),
+                                        style: TextStyle(
+                                          color: onSurface,
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 18,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      _QtyStepper(
+                                        onSurface: onSurface,
+                                        qty: _qty,
+                                        onDec: () => setState(() =>
+                                            _qty = (_qty > 1) ? _qty - 1 : 1),
+                                        onInc: () => setState(() =>
+                                            _qty = (_qty < 99) ? _qty + 1 : 99),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      _AddIconButton(
+                                        onSurface: onSurface,
+                                        onTap: () => _handleAddToCart(current,
+                                            qty: _qty),
+                                      ),
+                                    ],
+                                  ),
+                                ],
                               ),
                             ),
-                            const SizedBox(height: 6),
-
-                            // Price (updates with qty) + counter + compact add button
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Text(
-                                  total.toStringAsFixed(3),
-                                  style: TextStyle(
-                                    color: onSurface,
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 18,
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                _QtyStepper(
-                                  onSurface: onSurface,
-                                  qty: _qty,
-                                  onDec: () => setState(
-                                      () => _qty = (_qty > 1) ? _qty - 1 : 1),
-                                  onInc: () => setState(
-                                      () => _qty = (_qty < 99) ? _qty + 1 : 99),
-                                ),
-                                const SizedBox(width: 10),
-                                _AddIconButton(
-                                  onSurface: onSurface,
-                                  onTap: () =>
-                                      _handleAddToCart(current, qty: _qty),
-                                ),
-                              ],
-                            ),
-                          ],
+                          ),
                         ),
                       ),
-                    ),
+
+                      // 4) Nutrition panel on the RIGHT when detail is open
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: Padding(
+                          padding: const EdgeInsets.only(right: 12.0),
+                          child: NutritionPanel(
+                            sweet: current,
+                            visible: state.isDetailOpen,
+                            onClose: () => ref
+                                .read(sweetsControllerProvider.notifier)
+                                .closeDetail(),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-
-                // 4) Nutrition panel on the RIGHT when detail is open
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: Padding(
-                    padding: const EdgeInsets.only(right: 12.0),
-                    child: NutritionPanel(
-                      sweet: current,
-                      visible: state.isDetailOpen,
-                      onClose: () => ref
-                          .read(sweetsControllerProvider.notifier)
-                          .closeDetail(),
-                    ),
-                  ),
-                ),
-
-                // NOTE: Removed the body-layer cart badge that sat under the AppBar and swallowed taps.
               ],
             ),
           ),
         );
       },
     );
+  }
+
+  /// Filter sweets by selected category/subcategory.
+  List<Sweet> _filterByCategory(
+    List<Sweet> sweets,
+    List<Category> cats,
+    String? selCat,
+    String? selSub,
+  ) {
+    if (selSub != null) {
+      return sweets.where((s) => s.categoryId == selSub).toList();
+    }
+    if (selCat != null) {
+      // `parentId` is nullable, but `c` itself is not; compare safely.
+      final childIds = cats
+          .where((c) => (c.parentId ?? '') == selCat)
+          .map((c) => c.id);
+
+      final allowed = <String>{selCat, ...childIds};
+      return sweets
+          .where((s) => s.categoryId != null && allowed.contains(s.categoryId))
+          .toList();
+    }
+    return sweets;
   }
 
   Widget _buildPageItem(
@@ -274,7 +336,7 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
         child: Transform.rotate(
           angle: rot,
           child: SweetImage(
-            imageAsset: sweet.imageAsset!,
+            imageAsset: (sweet.imageAsset ?? ''), // safe
             isActive: isActive,
             isDetailOpen: state.isDetailOpen,
             hostKey: isActive ? _activeImageKey : null,
@@ -416,12 +478,9 @@ class _QtyStepper extends StatelessWidget {
       color: Colors.transparent,
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: onSurface.withOpacity(0.06),
+          color: Colors.black.withOpacity(0.30), // neutral dark overlay (no brand color)
           borderRadius: BorderRadius.circular(24),
-          boxShadow: const [
-            BoxShadow(color: Color(0x14000000), blurRadius: 14, offset: Offset(0, 8)),
-          ],
-          border: Border.all(color: onSurface.withOpacity(0.12)),
+          border: Border.all(color: Colors.black.withOpacity(0.15)),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,

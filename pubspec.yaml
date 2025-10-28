@@ -12,20 +12,19 @@ dependencies:
     sdk: flutter
   cupertino_icons: ^1.0.8
 
-  # Riverpod (use ONLY flutter_riverpod to avoid symbol conflicts)
-  flutter_riverpod: ^3.0.3
+  # Riverpod (keep runtime in sync to avoid duplicate-library issues on web)
+  flutter_riverpod: ^2.6.1
+  flutter_web_plugins:
+    sdk: flutter
 
   google_fonts: ^6.3.2
   file_picker: ^8.3.7
   http: ^1.5.0
 
-  # Firebase
+  # Firebase (core + auth + firestore)
   firebase_core: ^4.2.0
   firebase_auth: ^6.1.1
   cloud_firestore: ^6.0.3
-  cloud_functions: ^6.0.3
-  firebase_analytics: ^12.0.3
-  firebase_app_check: ^0.4.1+1
 
   # Currency formatting (3dp BHD)
   intl: ^0.19.0
@@ -34,6 +33,10 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+
+dependency_overrides:
+  # Ensure only one Riverpod version is resolved across transitive deps
+  riverpod: ^2.6.1
 
 flutter:
   uses-material-design: true

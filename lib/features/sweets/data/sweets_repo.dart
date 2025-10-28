@@ -1,46 +1,47 @@
-// lib/features/sweets/data/sweets_repo.dart (FIXED)
-import 'package:flutter/foundation.dart' show debugPrint;
+// lib/features/sweets/data/sweets_repo.dart (FINAL)
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-import '../../../core/branding/branding_providers.dart'; // For IDs
+import '../../../core/branding/branding_providers.dart'; // merchantIdProvider / branchIdProvider
 import 'sweet.dart';
 
 /// Live menu items for the effective merchant/branch
 final sweetsStreamProvider = StreamProvider<List<Sweet>>((ref) {
-  // IDs come from app.dart via the Notifier providers
+  // IDs are set by app.dart via the Notifier providers
   final m = ref.watch(merchantIdProvider);
   final b = ref.watch(branchIdProvider);
 
-  debugPrint('🍬 SweetsRepo: Loading menu for m=$m b=$b');
-
+  // Basic guard
   if (m.isEmpty || b.isEmpty) {
-    debugPrint('⚠️ SweetsRepo: Empty IDs, returning empty stream');
     return const Stream<List<Sweet>>.empty();
   }
 
-  final query = FirebaseFirestore.instance
+  final col = FirebaseFirestore.instance
       .collection('merchants').doc(m)
       .collection('branches').doc(b)
       .collection('menuItems')
       .where('isActive', isEqualTo: true)
       .orderBy('sort', descending: false);
 
-  return query.snapshots().map((qs) {
-    debugPrint('✅ SweetsRepo: Received ${qs.docs.length} items');
-
+  return col.snapshots().map((qs) {
     return qs.docs.map((d) {
       final v = d.data();
+
       final imgUrl = (v['imageUrl'] ?? '').toString().trim();
       final imgAsset = (v['imageAsset'] ?? '').toString().trim();
+      final categoryId = (v['categoryId'] ?? '').toString().trim();
+      final subcategoryId = (v['subcategoryId'] ?? '').toString().trim();
 
       return Sweet(
         id: d.id,
         name: (v['name'] ?? d.id).toString(),
+        // Keep imageAsset non-null for existing widgets that expect it
         imageAsset: imgAsset.isNotEmpty
             ? imgAsset
             : (imgUrl.isNotEmpty ? imgUrl : ''),
         imageUrl: imgUrl.isNotEmpty ? imgUrl : null,
+        categoryId: categoryId.isEmpty ? null : categoryId,
+        subcategoryId: subcategoryId.isEmpty ? null : subcategoryId,
         calories: _asInt(v['calories']),
         protein: _asDoubleOrNull(v['protein']),
         carbs: _asDoubleOrNull(v['carbs']),

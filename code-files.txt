@@ -1,5 +1,6 @@
 ﻿analysis_options.yaml
 firebase.json
+firestore.indexes.json
 flutterfire.json
 functions\.eslintrc.js
 functions\lib\index.js
@@ -22,6 +23,9 @@ lib\core\utils\haptics.dart
 lib\features\cart\state\cart_controller.dart
 lib\features\cart\widgets\cart_badge.dart
 lib\features\cart\widgets\cart_sheet.dart
+lib\features\categories\data\categories_repo.dart
+lib\features\categories\data\category.dart
+lib\features\categories\screens\category_admin_page.dart
 lib\features\orders\data\order_models.dart
 lib\features\orders\data\order_service.dart
 lib\features\orders\screens\order_status_page.dart
@@ -29,6 +33,7 @@ lib\features\sweets\data\sweet.dart
 lib\features\sweets\data\sweets_repo.dart
 lib\features\sweets\state\sweets_controller.dart
 lib\features\sweets\widgets\add_to_cart_button.dart
+lib\features\sweets\widgets\category_bar.dart
 lib\features\sweets\widgets\nutrition_panel.dart
 lib\features\sweets\widgets\sweet_image.dart
 lib\features\sweets\widgets\sweets_viewport.dart
@@ -43,7 +48,6 @@ pubspec.yaml
 scripts\backfill-slugs.js
 scripts\seed-menu.prod.js
 scripts\seed-slugs.js
-scripts\serviceAccount.json
 test\widget_test.dart
 web\index.html
 web\manifest.json
