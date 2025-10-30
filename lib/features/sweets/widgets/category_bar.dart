@@ -1,245 +1,213 @@
 // lib/features/sweets/widgets/category_bar.dart
+import 'dart:ui' show ImageFilter;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../categories/data/categories_repo.dart';
+import '../../categories/data/category.dart';
 import '../state/sweets_controller.dart';
 
-class CategoryBar extends ConsumerStatefulWidget {
-  const CategoryBar({super.key});
+/// Frosted-glass segmented Category bar (top level + optional sub row).
+/// Designed to sit over content, like iOS.
+/// Use from SweetsViewport: GlassCategoryBar().
+class GlassCategoryBar extends ConsumerStatefulWidget {
+  const GlassCategoryBar({super.key});
 
   @override
-  ConsumerState<CategoryBar> createState() => _CategoryBarState();
+  ConsumerState<GlassCategoryBar> createState() => _GlassCategoryBarState();
 }
 
-class _CategoryBarState extends ConsumerState<CategoryBar> {
-  // increase/decrease this to move the bar further from the AppBar
-  static const double _kTopGap = 20; // was 8
-
+class _GlassCategoryBarState extends ConsumerState<GlassCategoryBar> {
   final _topCtrl = ScrollController();
   final _subCtrl = ScrollController();
-  bool _topHasLeft = false, _topHasRight = false;
-  bool _subHasLeft = false, _subHasRight = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _topCtrl.addListener(_updateTopFades);
-    _subCtrl.addListener(_updateSubFades);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _updateTopFades();
-      _updateSubFades();
-    });
-  }
 
   @override
   void dispose() {
-    _topCtrl.removeListener(_updateTopFades);
-    _subCtrl.removeListener(_updateSubFades);
     _topCtrl.dispose();
     _subCtrl.dispose();
     super.dispose();
   }
 
-  void _updateTopFades() {
-    if (!_topCtrl.hasClients) return;
-    final atStart = _topCtrl.position.pixels <= 0.5;
-    final atEnd =
-        _topCtrl.position.maxScrollExtent - _topCtrl.position.pixels <= 0.5;
-    final hasLeft = !atStart, hasRight = !atEnd;
-    if (hasLeft != _topHasLeft || hasRight != _topHasRight) {
-      setState(() {
-        _topHasLeft = hasLeft;
-        _topHasRight = hasRight;
-      });
-    }
-  }
-
-  void _updateSubFades() {
-    if (!_subCtrl.hasClients) return;
-    final atStart = _subCtrl.position.pixels <= 0.5;
-    final atEnd =
-        _subCtrl.position.maxScrollExtent - _subCtrl.position.pixels <= 0.5;
-    final hasLeft = !atStart, hasRight = !atEnd;
-    if (hasLeft != _subHasLeft || hasRight != _subHasRight) {
-      setState(() {
-        _subHasLeft = hasLeft;
-        _subHasRight = hasRight;
-      });
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final catsAsync = ref.watch(categoriesStreamProvider);
-    final onSurface = Theme.of(context).colorScheme.onSurface;
-    final surface = Theme.of(context).colorScheme.surface;
+    final scheme = Theme.of(context).colorScheme;
+    final onSurface = scheme.onSurface;
 
     return catsAsync.maybeWhen(
-      data: (cats) {
-        final top = cats.where((c) => c.parentId == null).toList();
-        final selCat = ref.watch(selectedCategoryIdProvider);
-        final subs = cats.where((c) => c.parentId == selCat).toList();
+      orElse: () => const SizedBox.shrink(),
+      data: (all) {
+        if (all.isEmpty) return const SizedBox.shrink();
 
-        ChoiceChip chip({
+        final String? selTop = ref.watch(selectedCategoryIdProvider);
+        final String? selSub = ref.watch(selectedSubcategoryIdProvider);
+
+        final tops = all.where((c) => c.parentId == null).toList()
+          ..sort((a, b) => a.sort.compareTo(b.sort));
+        final subs = selTop == null
+            ? const <Category>[]
+            : (all.where((c) => c.parentId == selTop).toList()
+              ..sort((a, b) => a.sort.compareTo(b.sort)));
+
+        Widget pill({
           required String? id,
           required String label,
           required bool selected,
-          VoidCallback? onTap,
-        }) =>
-            ChoiceChip(
-              label: Text(label, style: TextStyle(color: onSurface)),
-              selected: selected,
-              onSelected: (_) => onTap?.call(),
-              backgroundColor: Colors.black.withOpacity(0.20),
-              selectedColor: Colors.black.withOpacity(0.28),
-              side: BorderSide(color: onSurface.withOpacity(0.6)),
-              shape: const StadiumBorder(),
-              visualDensity: VisualDensity.compact,
-            );
-
-        Widget fadedRow({
-          required ScrollController controller,
-          required List<Widget> children,
-          required bool showLeft,
-          required bool showRight,
-          EdgeInsets padding = const EdgeInsets.symmetric(
-            horizontal: 12,
-            vertical: 8,
-          ),
+          required VoidCallback onTap,
         }) {
-          const fadeWidth = 28.0;
-          return Stack(
-            children: [
-              SingleChildScrollView(
-                controller: controller,
-                scrollDirection: Axis.horizontal,
-                padding: padding,
-                physics: const BouncingScrollPhysics(),
-                child: Row(children: children),
-              ),
-              Positioned.fill(
-                left: 0,
-                child: IgnorePointer(
-                  child: AnimatedOpacity(
-                    opacity: showLeft ? 1 : 0,
-                    duration: const Duration(milliseconds: 160),
-                    curve: Curves.easeOut,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Container(
-                        width: fadeWidth,
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.centerLeft,
-                            end: Alignment.centerRight,
-                            colors: [surface, surface.withOpacity(0)],
-                          ),
-                        ),
-                      ),
-                    ),
+          // iOS glass look: translucent base + subtle border + rounded 999
+          final bg = selected
+              ? onSurface.withOpacity(0.10)
+              : onSurface.withOpacity(0.06);
+          final border = onSurface.withOpacity(selected ? 0.25 : 0.15);
+          final txt = onSurface;
+
+          return Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(999),
+              onTap: onTap,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                curve: Curves.easeOut,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                decoration: BoxDecoration(
+                  color: bg,
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: border),
+                ),
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+                    color: txt,
                   ),
                 ),
               ),
-              Positioned.fill(
-                right: 0,
-                child: IgnorePointer(
-                  child: AnimatedOpacity(
-                    opacity: showRight ? 1 : 0,
-                    duration: const Duration(milliseconds: 160),
-                    curve: Curves.easeOut,
-                    child: Align(
-                      alignment: Alignment.centerRight,
-                      child: Container(
-                        width: fadeWidth,
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.centerRight,
-                            end: Alignment.centerLeft,
-                            colors: [surface, surface.withOpacity(0)],
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ],
+            ),
           );
         }
 
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(height: _kTopGap), // extra spacing below the AppBar
-            fadedRow(
-              controller: _topCtrl,
-              showLeft: _topHasLeft,
-              showRight: _topHasRight,
-              children: [
-                chip(
-                  id: null,
-                  label: 'All',
-                  selected: selCat == null,
-                  onTap: () {
-                    ref.read(selectedCategoryIdProvider.notifier).state = null;
-                    ref
-                        .read(selectedSubcategoryIdProvider.notifier)
-                        .state = null;
-                    WidgetsBinding.instance
-                        .addPostFrameCallback((_) => _updateSubFades());
-                  },
+        Widget row({
+          required List<Widget> children,
+          required ScrollController controller,
+        }) {
+          return SingleChildScrollView(
+            controller: controller,
+            scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            child: Row(children: children),
+          );
+        }
+
+        // Glass container with blur + subtle gradient + hairline
+        final glass = ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: scheme.surface.withOpacity(0.40),
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: onSurface.withOpacity(0.08)),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    scheme.surface.withOpacity(0.42),
+                    scheme.surface.withOpacity(0.32),
+                  ],
                 ),
-                const SizedBox(width: 8),
-                ...top.map(
-                  (c) => Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: chip(
-                      id: c.id,
-                      label: c.name,
-                      selected: selCat == c.id,
-                      onTap: () {
-                        ref
-                            .read(selectedCategoryIdProvider.notifier)
-                            .state = c.id;
-                        ref
-                            .read(selectedSubcategoryIdProvider.notifier)
-                            .state = null;
-                        WidgetsBinding.instance
-                            .addPostFrameCallback((_) => _updateSubFades());
-                      },
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            if (selCat != null && subs.isNotEmpty)
-              fadedRow(
-                controller: _subCtrl,
-                showLeft: _subHasLeft,
-                showRight: _subHasRight,
-                children: subs
-                    .map(
-                      (s) => Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: chip(
-                          id: s.id,
-                          label: s.name,
-                          selected:
-                              ref.watch(selectedSubcategoryIdProvider) == s.id,
-                          onTap: () => ref
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Top row
+                  row(
+                    controller: _topCtrl,
+                    children: [
+                      pill(
+                        id: null,
+                        label: 'All',
+                        selected: selTop == null,
+                        onTap: () {
+                          ref.read(selectedCategoryIdProvider.notifier).state =
+                              null;
+                          ref
                               .read(selectedSubcategoryIdProvider.notifier)
-                              .state = s.id,
+                              .state = null;
+                        },
+                      ),
+                      ...tops.map(
+                        (c) => pill(
+                          id: c.id,
+                          label: c.name,
+                          selected: selTop == c.id,
+                          onTap: () {
+                            ref
+                                .read(selectedCategoryIdProvider.notifier)
+                                .state = c.id;
+                            ref
+                                .read(selectedSubcategoryIdProvider.notifier)
+                                .state = null;
+                          },
                         ),
                       ),
-                    )
-                    .toList(),
+                    ],
+                  ),
+
+                  // Divider hairline only when subs are present
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 160),
+                    child: (selTop != null && subs.isNotEmpty)
+                        ? Container(
+                            height: 1,
+                            color: onSurface.withOpacity(0.06),
+                          )
+                        : const SizedBox.shrink(),
+                  ),
+
+                  // Sub row
+                  AnimatedSize(
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeOutCubic,
+                    child: (selTop != null && subs.isNotEmpty)
+                        ? row(
+                            controller: _subCtrl,
+                            children: subs
+                                .map(
+                                  (s) => pill(
+                                    id: s.id,
+                                    label: s.name,
+                                    selected: selSub == s.id,
+                                    onTap: () => ref
+                                        .read(selectedSubcategoryIdProvider
+                                            .notifier)
+                                        .state = s.id,
+                                  ),
+                                )
+                                .toList(),
+                          )
+                        : const SizedBox.shrink(),
+                  ),
+                ],
               ),
-          ],
+            ),
+          ),
+        );
+
+        // Constrain width so it feels like a floating control
+        return ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 560),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: glass,
+          ),
         );
       },
-      orElse: () => const SizedBox.shrink(),
     );
   }
 }

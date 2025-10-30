@@ -120,7 +120,7 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
           return Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const CategoryBar(),
+              const GlassCategoryBar(),
               const SizedBox(height: 24),
               Text('No products in this category.',
                   style: TextStyle(color: onSurface)),
@@ -152,7 +152,6 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
             data: IconThemeData(color: onSurface),
             child: Column(
               children: [
-                const CategoryBar(),
                 Expanded(
                   child: Stack(
                     clipBehavior: Clip.none,
@@ -178,6 +177,18 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                         },
                       ),
 
+                     // 1.5) NEW: floating glass categories bar (iOS-style)
+                     Align(
+                       alignment: const Alignment(0, 0.48), // tweak 0.42..0.55
+                       child: IgnorePointer(
+                         ignoring: state.isDetailOpen,
+                         child: AnimatedOpacity(
+                           duration: const Duration(milliseconds: 180),
+                           opacity: state.isDetailOpen ? 0 : 1,
+                           child: const GlassCategoryBar(),
+                         ),
+                       ),
+                     ),
                       // 2) Mask RIGHT HALF when detail is open so the next item doesn't peek
                       if (state.isDetailOpen)
                         Positioned(
