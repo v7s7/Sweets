@@ -1,4 +1,3 @@
-// lib/core/branding/branding_repo.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'branding.dart';
@@ -7,42 +6,43 @@ class BrandingRepo {
   final FirebaseFirestore db;
   BrandingRepo(this.db);
 
-  /// merchants/{m}/branches/{b}/config/branding
   DocumentReference<Map<String, dynamic>> _doc(String m, String b) {
+    // ✅ Match your Firestore structure
     return db
         .collection('merchants').doc(m)
         .collection('branches').doc(b)
         .collection('config').doc('branding');
   }
 
-  /// Live branding stream with safe fallbacks and deduping.
   Stream<Branding> watch(String m, String b) {
     final path = 'merchants/$m/branches/$b/config/branding';
-    if (kDebugMode) debugPrint('BrandingRepo.watch -> $path');
-
+    debugPrint('BrandingRepo.watch -> $path'); // sanity log
     return _doc(m, b).snapshots().map((snap) {
-      if (!snap.exists || snap.data() == null) {
-        if (kDebugMode) debugPrint('Branding missing at $path -> using fallback');
+      if (!snap.exists) {
+        debugPrint('Branding doc missing at $path -> using fallback');
         return const Branding(
           title: 'App',
           headerText: '',
           primaryHex: '#FFFFFF',
           secondaryHex: '#000000',
-          logoUrl: null,
         );
       }
       final d = snap.data()!;
       return Branding(
-        title: _str(d, 'title', 'App'),
-        headerText: _str(d, 'headerText', ''),
-        primaryHex: _str(d, 'primaryHex', '#FFFFFF'),
-        secondaryHex: _str(d, 'secondaryHex', '#000000'),
-        logoUrl: _strOrNull(d, 'logoUrl'),
+        title: (d['title'] as String?)?.trim().isNotEmpty == true
+            ? d['title'] as String
+            : 'App',
+        headerText: (d['headerText'] as String?) ?? '',
+        primaryHex: (d['primaryHex'] as String?) ?? '#FFFFFF',
+        secondaryHex: (d['secondaryHex'] as String?) ?? '#000000',
+        logoUrl: (d['logoUrl'] as String?)?.trim(),
+        nutritionNote: (d['nutritionNote'] as String?)?.trim().isNotEmpty == true
+            ? (d['nutritionNote'] as String).trim()
+            : 'Nutrition values are approximate.',
       );
-    }).distinct((a, b) => a == b);
+    });
   }
 
-  /// Merge-save (only provided fields are updated).
   Future<void> save(String m, String b, Branding bnd) {
     return _doc(m, b).set({
       'title': bnd.title,
@@ -50,19 +50,7 @@ class BrandingRepo {
       'primaryHex': bnd.primaryHex,
       'secondaryHex': bnd.secondaryHex,
       'logoUrl': bnd.logoUrl,
-      'updatedAt': FieldValue.serverTimestamp(),
+      'nutritionNote': bnd.nutritionNote,
     }, SetOptions(merge: true));
-  }
-
-  // ----------------- helpers -----------------
-
-  static String _str(Map<String, dynamic> m, String k, String fallback) {
-    final s = (m[k] as String?)?.trim();
-    return (s == null || s.isEmpty) ? fallback : s;
-    }
-
-  static String? _strOrNull(Map<String, dynamic> m, String k) {
-    final s = (m[k] as String?)?.trim();
-    return (s == null || s.isEmpty) ? null : s;
   }
 }

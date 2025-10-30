@@ -30,15 +30,31 @@ class _BrandingAdminPageState extends ConsumerState<BrandingAdminPage> {
   final _header = TextEditingController();
   final _primary = TextEditingController(text: '#E91E63');
   final _secondary = TextEditingController(text: '#FFB300');
+  final _note = TextEditingController(
+      text: 'Nutrition values are approximate.'); // admin-editable sentence
 
-  bool _dirty = false; // branding text/color fields edited by user
-  String? _logoUrl;    // local preview; always persisted to Firestore
+  bool _dirty = false; // branding text/color/note edited by user
+  String? _logoUrl; // local preview; persisted to Firestore
 
   @override
   void initState() {
     super.initState();
-    for (final c in [_title, _header, _primary, _secondary]) {
+    for (final c in [_title, _header, _primary, _secondary, _note]) {
       c.addListener(() => _dirty = true);
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // One-time initial population (no asserts; ref.read is safe here).
+    final b = ref.read(brandingProvider).maybeWhen(
+          data: (v) => v,
+          orElse: () => null,
+        );
+    if (b != null && !_dirty) {
+      _applyBrandingToFields(b);
+      _logoUrl ??= b.logoUrl;
     }
   }
 
@@ -48,6 +64,7 @@ class _BrandingAdminPageState extends ConsumerState<BrandingAdminPage> {
     _header.dispose();
     _primary.dispose();
     _secondary.dispose();
+    _note.dispose();
     super.dispose();
   }
 
@@ -60,16 +77,21 @@ class _BrandingAdminPageState extends ConsumerState<BrandingAdminPage> {
     // Live branding stream (keeps fields/logo persistent across restarts)
     ref.listen<AsyncValue<Branding>>(brandingProvider, (prev, next) {
       next.whenOrNull(data: (b) {
-        _logoUrl ??= b.logoUrl; // don't overwrite after local changes
+        // Do not overwrite user's current typing.
         if (!_dirty) _applyBrandingToFields(b);
-        setState(() {}); // refresh preview
+        // Keep preview if user hasn't just uploaded in this session.
+        _logoUrl ??= b.logoUrl;
+        setState(() {}); // refresh preview if needed
       });
     });
 
     final brandingRef = FirebaseFirestore.instance
-        .collection('merchants').doc(m)
-        .collection('branches').doc(br)
-        .collection('config').doc('branding');
+        .collection('merchants')
+        .doc(m)
+        .collection('branches')
+        .doc(br)
+        .collection('config')
+        .doc('branding');
 
     final menuUrl = '$kAppHost/#/?m=$m&b=$br';
 
@@ -113,19 +135,41 @@ class _BrandingAdminPageState extends ConsumerState<BrandingAdminPage> {
               LengthLimitingTextInputFormatter(9),
             ],
           ),
+          const SizedBox(height: 8),
+          TextField(
+            decoration: const InputDecoration(
+              labelText:
+                  'Nutrition note (shown below categories when Nutrition is open)',
+              helperText: 'Example: "Nutrition values are approximate."',
+            ),
+            controller: _note,
+            textInputAction: TextInputAction.newline,
+            maxLines: 2,
+          ),
           const SizedBox(height: 16),
           ElevatedButton.icon(
             icon: const Icon(Icons.save),
             label: const Text('Save Branding'),
             onPressed: () async {
               try {
+                final currentBranding =
+                    ref.read(brandingProvider).maybeWhen<Branding?>(
+                          data: (b) => b,
+                          orElse: () => null,
+                        );
+
                 final value = Branding(
-                  title: _title.text.trim().isEmpty ? 'App' : _title.text.trim(),
+                  title:
+                      _title.text.trim().isEmpty ? 'App' : _title.text.trim(),
                   headerText: _header.text.trim(),
                   primaryHex: _sanitizeHex(_primary.text),
                   secondaryHex: _sanitizeHex(_secondary.text),
-                  logoUrl: _logoUrl,
+                  logoUrl: _logoUrl ?? currentBranding?.logoUrl,
+                  nutritionNote: _note.text.trim().isEmpty
+                      ? 'Nutrition values are approximate.'
+                      : _note.text.trim(),
                 );
+
                 await repo.save(m, br, value);
                 _dirty = false;
                 if (!mounted) return;
@@ -216,69 +260,69 @@ class _BrandingAdminPageState extends ConsumerState<BrandingAdminPage> {
     _header.text = b.headerText;
     _primary.text = b.primaryHex;
     _secondary.text = b.secondaryHex;
+    _note.text = b.nutritionNote;
   }
 
-Future<void> _onPickAndUploadLogo(
-  DocumentReference<Map<String, dynamic>> brandingRef,
-) async {
-  final result = await FilePicker.platform.pickFiles(
-    type: FileType.image,
-    allowMultiple: false,
-    withData: true, // web & mobile
-  );
-  if (result == null || result.files.isEmpty) return;
+  Future<void> _onPickAndUploadLogo(
+    DocumentReference<Map<String, dynamic>> brandingRef,
+  ) async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      allowMultiple: false,
+      withData: true, // web & mobile
+    );
+    if (result == null || result.files.isEmpty) return;
 
-  final file = result.files.single;
+    final file = result.files.single;
 
-  // 1) Try in-memory bytes
-  Uint8List? bytes = file.bytes;
+    // 1) Try in-memory bytes
+    Uint8List? bytes = file.bytes;
 
-  // 2) Fallback to readStream (safe on all platforms; no dart:io)
-  if (bytes == null && file.readStream != null) {
-    final builder = BytesBuilder(copy: false);
-    await for (final chunk in file.readStream!) {
-      builder.add(chunk);
+    // 2) Fallback to readStream (safe on all platforms; no dart:io)
+    if (bytes == null && file.readStream != null) {
+      final builder = BytesBuilder(copy: false);
+      await for (final chunk in file.readStream!) {
+        builder.add(chunk);
+      }
+      bytes = builder.takeBytes();
     }
-    bytes = builder.takeBytes();
+
+    if (bytes == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not read selected file')),
+      );
+      return;
+    }
+
+    if (_kCloudName.isEmpty || _kUnsignedPreset.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+              'Cloudinary not configured. Set CLOUDINARY_CLOUD & CLOUDINARY_PRESET.'),
+        ),
+      );
+      return;
+    }
+
+    try {
+      final url = await _uploadToCloudinary(bytes, filename: file.name);
+      await brandingRef.set({'logoUrl': url}, SetOptions(merge: true));
+      setState(() => _logoUrl = url);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Logo uploaded')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Upload failed: $e')),
+      );
+    }
   }
 
-  if (bytes == null) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Could not read selected file')),
-    );
-    return;
-  }
-
-  if (_kCloudName.isEmpty || _kUnsignedPreset.isEmpty) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Cloudinary not configured. Set CLOUDINARY_CLOUD & CLOUDINARY_PRESET.'),
-      ),
-    );
-    return;
-  }
-
-  try {
-    final url = await _uploadToCloudinary(bytes, filename: file.name);
-    await brandingRef.set({'logoUrl': url}, SetOptions(merge: true));
-    setState(() => _logoUrl = url);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Logo uploaded')),
-    );
-  } catch (e) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Upload failed: $e')),
-    );
-  }
-}
-
-
-  Future<String> _uploadToCloudinary(Uint8List bytes,
-      {String? filename}) async {
+  Future<String> _uploadToCloudinary(Uint8List bytes, {String? filename}) async {
     final uri =
         Uri.parse('https://api.cloudinary.com/v1_1/$_kCloudName/image/upload');
 
@@ -318,7 +362,7 @@ class _LogoCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final onSurface = Theme.of(context).colorScheme.onSurface;
     return InkWell(
-      onTap: onTap, // POPS the picker immediately
+      onTap: onTap, // opens picker immediately
       borderRadius: BorderRadius.circular(12),
       child: Container(
         height: 96,

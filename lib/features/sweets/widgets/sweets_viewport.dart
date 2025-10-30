@@ -14,7 +14,7 @@ import 'category_bar.dart';
 import '../../categories/data/categories_repo.dart'; // categoriesStreamProvider
 import '../../categories/data/category.dart';
 
-// NEW: branding (for logo)
+// NEW: branding (for logo + nutrition note)
 import '../../../core/branding/branding_providers.dart';
 import '../../../core/branding/branding.dart';
 
@@ -99,15 +99,20 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
   Widget build(BuildContext context) {
     final sweetsAsync = ref.watch(sweetsStreamProvider);
     final catsAsync = ref.watch(categoriesStreamProvider);
-  // Branding (for logo) — safer, no "!" and trims once
-  final Branding? branding = ref.watch(brandingProvider).maybeWhen(
-    data: (b) => b,
-    orElse: () => null,
-  );
-  final String? logoUrl = (() {
-    final s = branding?.logoUrl?.trim();
-    return (s != null && s.isNotEmpty) ? s : null;
-  })();
+
+    // Branding (logo + nutrition note) — safe trims
+    final Branding? branding = ref.watch(brandingProvider).maybeWhen(
+      data: (b) => b,
+      orElse: () => null,
+    );
+    final String? logoUrl = (() {
+      final s = branding?.logoUrl?.trim();
+      return (s != null && s.isNotEmpty) ? s : null;
+    })();
+    final String? nutritionNote = (() {
+      final s = branding?.nutritionNote?.trim();
+      return (s != null && s.isNotEmpty) ? s : null;
+    })();
 
     return sweetsAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -119,7 +124,8 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
       ),
       data: (allSweets) {
         final onSurface = Theme.of(context).colorScheme.onSurface;
-
+        final typography = Theme.of(context).textTheme;
+        final String? secondaryFamily = typography.titleSmall?.fontFamily;
         final List<Category> cats = catsAsync.value ?? <Category>[];
         final selCat = ref.watch(selectedCategoryIdProvider);
         final selSub = ref.watch(selectedSubcategoryIdProvider);
@@ -132,6 +138,25 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
             children: [
               const SizedBox(height: 12),
               const CategoryBar(),
+              if (nutritionNote != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6.0),
+                  child: Text(
+                    nutritionNote,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: (typography.titleSmall ?? const TextStyle())
+                        .copyWith(
+                      fontFamily: secondaryFamily,
+                      fontSize:
+                          (typography.titleSmall?.fontSize ?? 14) + 1.5,
+                      height: 1.28,
+                      fontWeight: FontWeight.w600,
+                      color: onSurface.withOpacity(0.78),
+                    ),
+                  ),
+                ),
               const SizedBox(height: 24),
               Text('No products in this category.',
                   style: TextStyle(color: onSurface)),
@@ -155,8 +180,10 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
         final surface = Theme.of(context).colorScheme.surface;
 
         return DefaultTextStyle.merge(
-          style:
-              Theme.of(context).textTheme.bodyMedium!.copyWith(color: onSurface),
+          style: Theme.of(context)
+              .textTheme
+              .bodyMedium!
+              .copyWith(color: onSurface),
           child: IconTheme(
             data: IconThemeData(color: onSurface),
             child: Column(
@@ -200,43 +227,45 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                           ),
                         ),
 
-   // ---- Centered brand logo: below AppBar, above item carousel ----
-                     if (logoUrl case final url?)
-                       Align(
-                         alignment: Alignment.topCenter,
-                         child: IgnorePointer(
-                           ignoring: true, // don't block gestures
-                           child: Padding(
-                             // status bar + toolbar + small gap (tweakable)
-                             padding: EdgeInsets.only(
-                               top: MediaQuery.of(context).padding.top + kToolbarHeight + 8,
-                             ),
-                             child: AnimatedOpacity(
-                               duration: const Duration(milliseconds: 180),
-                               opacity: state.isDetailOpen ? 0 : 1,
-                               child: _LogoCard(
-                                 url: url,
-                                 // tweak sizes here
-                                 box: 120,    // outer square size
-                                 icon: 100,   // image size
-                                 borderOpacity: 0.10,
-                                 fillOpacity: 0.06,
-                               ),
-                             ),
-                           ),
-                         ),
-                       ),
+                      // 3) Centered brand logo
+                      if (logoUrl case final url?)
+                        Align(
+                          alignment: Alignment.topCenter,
+                          child: IgnorePointer(
+                            ignoring: true,
+                            child: Padding(
+                              padding: EdgeInsets.only(
+                                top: MediaQuery.of(context).padding.top +
+                                    kToolbarHeight +
+                                    8,
+                              ),
+                              child: AnimatedOpacity(
+                                duration:
+                                    const Duration(milliseconds: 180),
+                                opacity: state.isDetailOpen ? 0 : 1,
+                                child: _LogoCard(
+                                  url: url,
+                                  box: 120,
+                                  icon: 100,
+                                  borderOpacity: 0.10,
+                                  fillOpacity: 0.06,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
 
-                      // 4) Dots + Category bar (moved slightly UP)
+                      // 4) Dots + Category bar
                       Align(
-                        alignment: const Alignment(0, 0.48), // was 0.56
+                        alignment: const Alignment(0, 0.48),
                         child: IgnorePointer(
                           ignoring: state.isDetailOpen,
                           child: AnimatedOpacity(
                             opacity: state.isDetailOpen ? 0 : 1,
                             duration: const Duration(milliseconds: 160),
                             child: ConstrainedBox(
-                              constraints: const BoxConstraints(maxWidth: 560),
+                              constraints:
+                                  const BoxConstraints(maxWidth: 560),
                               child: Column(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
@@ -265,19 +294,22 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                           ignoring: state.isDetailOpen,
                           child: AnimatedOpacity(
                             opacity: state.isDetailOpen ? 0 : 1,
-                            duration: const Duration(milliseconds: 180),
+                            duration:
+                                const Duration(milliseconds: 180),
                             child: ConstrainedBox(
-                              constraints: const BoxConstraints(maxWidth: 520),
+                              constraints:
+                                  const BoxConstraints(maxWidth: 520),
                               child: Column(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   AnimatedSwitcher(
                                     duration:
                                         const Duration(milliseconds: 180),
-                                    transitionBuilder: (c, a) => FadeTransition(
+                                    transitionBuilder: (c, a) =>
+                                        FadeTransition(
                                       opacity: a,
-                                      child:
-                                          ScaleTransition(scale: a, child: c),
+                                      child: ScaleTransition(
+                                          scale: a, child: c),
                                     ),
                                     child: Text(
                                       current.name,
@@ -294,7 +326,8 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                                   ),
                                   const SizedBox(height: 6),
                                   Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.center,
                                     children: [
                                       Text(
                                         total.toStringAsFixed(3),
@@ -309,15 +342,18 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                                         onSurface: onSurface,
                                         qty: _qty,
                                         onDec: () => setState(() =>
-                                            _qty = (_qty > 1) ? _qty - 1 : 1),
+                                            _qty =
+                                                (_qty > 1) ? _qty - 1 : 1),
                                         onInc: () => setState(() =>
-                                            _qty = (_qty < 99) ? _qty + 1 : 99),
+                                            _qty =
+                                                (_qty < 99) ? _qty + 1 : 99),
                                       ),
                                       const SizedBox(width: 10),
                                       _AddIconButton(
                                         onSurface: onSurface,
-                                        onTap: () => _handleAddToCart(current,
-                                            qty: _qty),
+                                        onTap: () =>
+                                            _handleAddToCart(current,
+                                                qty: _qty),
                                       ),
                                     ],
                                   ),
@@ -328,7 +364,7 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                         ),
                       ),
 
-                      // 6) Nutrition panel
+                      // 6) Nutrition panel (right) – no text here now
                       Align(
                         alignment: Alignment.centerRight,
                         child: Padding(
@@ -342,6 +378,47 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                           ),
                         ),
                       ),
+
+                      // 7) Center nutrition note (big, single)
+                      if (nutritionNote != null &&
+                          nutritionNote.isNotEmpty)
+                        Align(
+                          alignment:
+                              const Alignment(0, 0.9), // between item & bottom
+                          child: AnimatedOpacity(
+                            duration:
+                                const Duration(milliseconds: 160),
+                            opacity: state.isDetailOpen ? 1 : 0,
+                            child: ConstrainedBox(
+                              constraints:
+                                  const BoxConstraints(maxWidth: 420),
+                              child: Text(
+                                nutritionNote,
+                                textAlign: TextAlign.center,
+                                maxLines: 3,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context)
+                                        .textTheme
+                                        .titleMedium
+                                        ?.copyWith(
+                                          fontSize: 18,
+                                          fontWeight: FontWeight.w700,
+                                          color: onSurface
+                                              .withOpacity(0.9),
+                                          fontFamily: secondaryFamily,
+                                          height: 1.25,
+                                        ) ??
+                                    TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w700,
+                                      color: onSurface.withOpacity(0.9),
+                                      fontFamily: secondaryFamily,
+                                      height: 1.25,
+                                    ),
+                              ),
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -384,7 +461,6 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
     final y = 18 * t.abs();
     final rot = 0.02 * -t;
 
-    // Single owner of the GlobalKey to avoid duplicates
     final int activeHost =
         _pc.hasClients ? (_pc.page?.round() ?? _kInitialPage) : _kInitialPage;
     final bool isHost = (i == activeHost);
@@ -472,7 +548,8 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
     _flyEntry = entry;
 
     controller.addStatusListener((st) {
-      if (st == AnimationStatus.completed || st == AnimationStatus.dismissed) {
+      if (st == AnimationStatus.completed ||
+          st == AnimationStatus.dismissed) {
         if (entry.mounted) {
           try {
             entry.remove();
@@ -549,7 +626,10 @@ class _QtyStepper extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               child: Text(
                 qty.toString().padLeft(2, '0'),
-                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16, color: onSurface),
+                style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 16,
+                    color: onSurface),
               ),
             ),
             _step(icon: Icons.add_rounded, onTap: onInc, onSurface: onSurface),
@@ -559,7 +639,10 @@ class _QtyStepper extends StatelessWidget {
     );
   }
 
-  Widget _step({required IconData icon, required VoidCallback onTap, required Color onSurface}) {
+  Widget _step(
+      {required IconData icon,
+      required VoidCallback onTap,
+      required Color onSurface}) {
     return InkWell(
       borderRadius: BorderRadius.circular(24),
       onTap: onTap,
@@ -621,8 +704,7 @@ class _DotsIndicator extends StatelessWidget {
         for (int i = 0; i < visible.length; i++)
           _dot(
             isActive: visible[i] == active,
-            isEdgeTruncator:
-                (i == 0 && visible.first > 0) ||
+            isEdgeTruncator: (i == 0 && visible.first > 0) ||
                 (i == visible.length - 1 && visible.last < count - 1),
           ),
       ],
@@ -664,19 +746,26 @@ class _DotsIndicator extends StatelessWidget {
     int start = active - half;
     int end = active + half;
     if (max.isEven) end -= 1;
-    if (start < 0) { end += -start; start = 0; }
-    if (end > count - 1) { start -= (end - (count - 1)); end = count - 1; }
+    if (start < 0) {
+      end += -start;
+      start = 0;
+    }
+    if (end > count - 1) {
+      start -= (end - (count - 1));
+      end = count - 1;
+    }
     if (start < 0) start = 0;
     final len = end - start + 1;
     if (len > max) end -= (len - max);
     return List<int>.generate(end - start + 1, (i) => start + i);
   }
 }
+
 /// Center logo card used on the home viewport.
 class _LogoCard extends StatelessWidget {
   final String url;
-  final double box;          // outer square size
-  final double icon;         // image size inside
+  final double box; // outer square size
+  final double icon; // image size inside
   final double borderOpacity;
   final double fillOpacity;
   const _LogoCard({
