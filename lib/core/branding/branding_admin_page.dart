@@ -1,15 +1,23 @@
 // lib/core/branding/branding_admin_page.dart
+import 'dart:convert';
+import 'dart:typed_data';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:http/http.dart' as http;
 
 import 'branding.dart';
 import 'branding_providers.dart';
 
-/// Public app host used in the share link
+/// App host for the customer menu link (query params only).
 const String kAppHost =
-    String.fromEnvironment('APP_HOST', defaultValue: 'https://your.app');
+    String.fromEnvironment('APP_HOST', defaultValue: 'https://localhost');
+
+/// Cloudinary (unsigned) config for logo uploads.
+const String _kCloudName = 'dkirkzbfa';
+const String _kUnsignedPreset = 'unsigned_products';
 
 class BrandingAdminPage extends ConsumerStatefulWidget {
   const BrandingAdminPage({super.key});
@@ -23,11 +31,8 @@ class _BrandingAdminPageState extends ConsumerState<BrandingAdminPage> {
   final _primary = TextEditingController(text: '#E91E63');
   final _secondary = TextEditingController(text: '#FFB300');
 
-  // Slug editor
-  final _slug = TextEditingController();
-
-  bool _dirty = false;       // branding fields edited by user
-  bool _slugDirty = false;   // slug field edited by user
+  bool _dirty = false; // branding text/color fields edited by user
+  String? _logoUrl;    // local preview; always persisted to Firestore
 
   @override
   void initState() {
@@ -35,20 +40,6 @@ class _BrandingAdminPageState extends ConsumerState<BrandingAdminPage> {
     for (final c in [_title, _header, _primary, _secondary]) {
       c.addListener(() => _dirty = true);
     }
-    _slug.addListener(() => _slugDirty = true);
-
-    // Populate fields when branding stream emits (only if not dirty).
-
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final b = ref.read(brandingProvider).maybeWhen(
-          data: (v) => v,
-          orElse: () => null,
-        );
-    if (b != null && !_dirty) _applyBrandingToFields(b);
   }
 
   @override
@@ -57,29 +48,30 @@ class _BrandingAdminPageState extends ConsumerState<BrandingAdminPage> {
     _header.dispose();
     _primary.dispose();
     _secondary.dispose();
-    _slug.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-  ref.listen(brandingProvider, (prev, next) {
-    next.maybeWhen(
-      data: (b) {
-        if (!_dirty) _applyBrandingToFields(b);
-      },
-      orElse: () {},
-    );
-  });
     final m = ref.watch(merchantIdProvider);
     final br = ref.watch(branchIdProvider);
     final repo = ref.watch(brandingRepoProvider);
 
-    // Live branding doc to read/write shareSlug
+    // Live branding stream (keeps fields/logo persistent across restarts)
+    ref.listen<AsyncValue<Branding>>(brandingProvider, (prev, next) {
+      next.whenOrNull(data: (b) {
+        _logoUrl ??= b.logoUrl; // don't overwrite after local changes
+        if (!_dirty) _applyBrandingToFields(b);
+        setState(() {}); // refresh preview
+      });
+    });
+
     final brandingRef = FirebaseFirestore.instance
         .collection('merchants').doc(m)
         .collection('branches').doc(br)
         .collection('config').doc('branding');
+
+    final menuUrl = '$kAppHost/#/?m=$m&b=$br';
 
     return Scaffold(
       appBar: AppBar(title: const Text('Branding Settings')),
@@ -132,6 +124,7 @@ class _BrandingAdminPageState extends ConsumerState<BrandingAdminPage> {
                   headerText: _header.text.trim(),
                   primaryHex: _sanitizeHex(_primary.text),
                   secondaryHex: _sanitizeHex(_secondary.text),
+                  logoUrl: _logoUrl,
                 );
                 await repo.save(m, br, value);
                 _dirty = false;
@@ -152,121 +145,64 @@ class _BrandingAdminPageState extends ConsumerState<BrandingAdminPage> {
           const Divider(),
           const SizedBox(height: 12),
 
-          // -------------------- Public Link / Slug --------------------
+          // -------------------- Logo (click to upload) --------------------
           Text(
-            'Public Link (Pretty URL)',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+            'Logo',
+            style: Theme.of(context)
+                .textTheme
+                .titleMedium
+                ?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 8),
+          _LogoCard(
+            url: _logoUrl,
+            onTap: () => _onPickAndUploadLogo(brandingRef),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              OutlinedButton.icon(
+                icon: const Icon(Icons.upload),
+                label: const Text('Upload / Replace Logo'),
+                onPressed: () => _onPickAndUploadLogo(brandingRef),
+              ),
+              const SizedBox(width: 12),
+              if (_logoUrl != null && _logoUrl!.isNotEmpty)
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.delete_outline),
+                  label: const Text('Remove Logo'),
+                  onPressed: () async {
+                    await brandingRef.set({'logoUrl': FieldValue.delete()},
+                        SetOptions(merge: true));
+                    setState(() => _logoUrl = null);
+                  },
+                ),
+            ],
+          ),
 
-          StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-            stream: brandingRef.snapshots(),
-            builder: (context, snap) {
-              final data = snap.data?.data();
-              final shareSlug = (data?['shareSlug'] as String?)?.trim() ?? '';
+          const SizedBox(height: 24),
+          const Divider(),
+          const SizedBox(height: 12),
 
-              if (!_slugDirty && shareSlug.isNotEmpty && _slug.text != shareSlug) {
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (mounted && !_slugDirty) _slug.text = shareSlug;
-                });
-              }
-
-              final url = _buildShareUrl(
-                merchantId: m,
-                branchId: br,
-                slug: _slug.text.trim().isNotEmpty ? _slug.text.trim() : shareSlug,
-              );
-
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  TextField(
-                    controller: _slug,
-                    decoration: const InputDecoration(
-                      labelText: 'Public link slug (e.g., donuts-budaiya)',
-                      helperText:
-                          'Customers will use https://…/s/<slug>. Must be 3–32 lowercase letters, numbers, or hyphens.',
-                    ),
-                    textInputAction: TextInputAction.done,
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      OutlinedButton.icon(
-                        icon: const Icon(Icons.link),
-                        label: const Text('Save Slug'),
-                        onPressed: () async {
-                          final raw = _slug.text.trim();
-                          if (raw.isEmpty) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Slug cannot be empty')),
-                            );
-                            return;
-                          }
-                          try {
-                            final norm = _normalizeSlug(raw);
-                            await _reserveSlugClientTx(
-                              merchantId: m,
-                              branchId: br,
-                              normSlug: norm,
-                            );
-                            _slugDirty = false;
-                            if (!mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Slug saved')),
-                            );
-                          } catch (e) {
-                            if (!mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text(e.toString())),
-                            );
-                          }
-                        },
-                      ),
-                      const SizedBox(width: 12),
-                      if (url != null)
-                        OutlinedButton.icon(
-                          icon: const Icon(Icons.copy),
-                          label: const Text('Copy Public Link'),
-                          onPressed: () async {
-                            await Clipboard.setData(ClipboardData(text: url));
-                            if (!mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Link copied')),
-                            );
-                          },
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  if (url != null) ...[
-                    const Text('Public URL:', style: TextStyle(fontWeight: FontWeight.w700)),
-                    SelectableText(url),
-                  ] else ...[
-                    Text(
-                      'No slug yet. Customers can still use the fallback query link below.',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ],
-                  const SizedBox(height: 16),
-                  const Text('Fallback (query) link:', style: TextStyle(fontWeight: FontWeight.w700)),
-                  SelectableText(_buildQueryLink(m, br)),
-                  const SizedBox(height: 8),
-                  OutlinedButton.icon(
-                    icon: const Icon(Icons.copy_all),
-                    label: const Text('Copy Fallback Link'),
-                    onPressed: () async {
-                      final q = _buildQueryLink(m, br);
-                      await Clipboard.setData(ClipboardData(text: q));
-                      if (!mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Fallback link copied')),
-                      );
-                    },
-                  ),
-                ],
+          // -------------------- Copy Menu Link (no pretty URLs) --------------------
+          Text(
+            'Copy Menu Link',
+            style: Theme.of(context)
+                .textTheme
+                .titleMedium
+                ?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 8),
+          SelectableText(menuUrl),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            icon: const Icon(Icons.copy),
+            label: const Text('Copy'),
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: menuUrl));
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Link copied')),
               );
             },
           ),
@@ -282,105 +218,87 @@ class _BrandingAdminPageState extends ConsumerState<BrandingAdminPage> {
     _secondary.text = b.secondaryHex;
   }
 
-  /// Firestore client transaction to reserve/update slug without Cloud Functions.
-  Future<void> _reserveSlugClientTx({
-    required String merchantId,
-    required String branchId,
-    required String normSlug,
-  }) async {
-    final fs = FirebaseFirestore.instance;
+Future<void> _onPickAndUploadLogo(
+  DocumentReference<Map<String, dynamic>> brandingRef,
+) async {
+  final result = await FilePicker.platform.pickFiles(
+    type: FileType.image,
+    allowMultiple: false,
+    withData: true, // web & mobile
+  );
+  if (result == null || result.files.isEmpty) return;
 
-    final brandingRef = fs
-        .collection('merchants').doc(merchantId)
-        .collection('branches').doc(branchId)
-        .collection('config').doc('branding');
+  final file = result.files.single;
 
-    final newSlugRef = fs.doc('slugs/$normSlug');
-    final branchRef = fs.doc('merchants/$merchantId/branches/$branchId');
+  // 1) Try in-memory bytes
+  Uint8List? bytes = file.bytes;
 
-    await fs.runTransaction((tx) async {
-      final brandingSnap = await tx.get(brandingRef);
-      final prevSlug = brandingSnap.exists
-          ? (brandingSnap.data()?['shareSlug'] as String?)
-          : null;
-
-      final newSlugSnap = await tx.get(newSlugRef);
-
-      if (newSlugSnap.exists) {
-        final d = newSlugSnap.data()!;
-        final same =
-            d['merchantId'] == merchantId && d['branchId'] == branchId;
-        if (!same) {
-          throw Exception('Slug already taken.');
-        }
-        // If same mapping, idempotent update continues.
-      }
-
-      // Free previous slug if changed
-      if (prevSlug != null && prevSlug.isNotEmpty && prevSlug != normSlug) {
-        tx.delete(fs.doc('slugs/$prevSlug'));
-      }
-
-      // Reserve/refresh slug
-      tx.set(newSlugRef, {
-        'merchantId': merchantId,
-        'branchId': branchId,
-        'active': true,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-
-      // Write slug into branding
-      tx.set(brandingRef, {'shareSlug': normSlug},
-          SetOptions(merge: true));
-
-      // Optional mirror on branch doc (matches your screenshot)
-      tx.set(
-        branchRef,
-        {'slug': normSlug, 'updatedAt': FieldValue.serverTimestamp()},
-        SetOptions(merge: true),
-      );
-    });
-  }
-
-  /// Normalize & validate slug (client-side).
-  String _normalizeSlug(String s) {
-    final trimmed = (s).toLowerCase().trim();
-    final norm = trimmed
-        .replaceAll(RegExp('[^a-z0-9-]'), '-')
-        .replaceAll(RegExp('-+'), '-')
-        .replaceAll(RegExp('^-|-\$'), '');
-    if (norm.length < 3 || norm.length > 32) {
-      throw Exception('Slug must be 3–32 characters.');
+  // 2) Fallback to readStream (safe on all platforms; no dart:io)
+  if (bytes == null && file.readStream != null) {
+    final builder = BytesBuilder(copy: false);
+    await for (final chunk in file.readStream!) {
+      builder.add(chunk);
     }
-    const reserved = {
-      'admin','api','app','assets','s','m','b',
-      'login','signup','merchant','console'
-    };
-    if (reserved.contains(norm)) {
-      throw Exception('Slug is reserved.');
+    bytes = builder.takeBytes();
+  }
+
+  if (bytes == null) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Could not read selected file')),
+    );
+    return;
+  }
+
+  if (_kCloudName.isEmpty || _kUnsignedPreset.isEmpty) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Cloudinary not configured. Set CLOUDINARY_CLOUD & CLOUDINARY_PRESET.'),
+      ),
+    );
+    return;
+  }
+
+  try {
+    final url = await _uploadToCloudinary(bytes, filename: file.name);
+    await brandingRef.set({'logoUrl': url}, SetOptions(merge: true));
+    setState(() => _logoUrl = url);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Logo uploaded')),
+    );
+  } catch (e) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Upload failed: $e')),
+    );
+  }
+}
+
+
+  Future<String> _uploadToCloudinary(Uint8List bytes,
+      {String? filename}) async {
+    final uri =
+        Uri.parse('https://api.cloudinary.com/v1_1/$_kCloudName/image/upload');
+
+    final req = http.MultipartRequest('POST', uri)
+      ..fields['upload_preset'] = _kUnsignedPreset
+      ..files.add(http.MultipartFile.fromBytes(
+        'file',
+        bytes,
+        filename: filename ?? 'logo.png',
+      ));
+
+    final res = await req.send();
+    final body = await http.Response.fromStream(res);
+    if (body.statusCode >= 200 && body.statusCode < 300) {
+      final Map<String, dynamic> json = jsonDecode(body.body);
+      return (json['secure_url'] ?? json['url']) as String;
     }
-    return norm;
+    throw Exception('HTTP ${body.statusCode}: ${body.body}');
   }
 
-  /// Pretty link if `slug` present; else null.
-  String? _buildShareUrl({
-    required String merchantId,
-    required String branchId,
-    String? slug,
-  }) {
-    if (merchantId.isEmpty || branchId.isEmpty) return null;
-    final s = (slug ?? '').trim();
-    if (s.isEmpty) return null;
-    return '$kAppHost/#/s/$s';
-  }
-
-  /// Stable query link: https://<host>/#/?m=<m>&b=<b>
-  String _buildQueryLink(String m, String br) {
-    if (m.isEmpty || br.isEmpty) return '';
-    return '$kAppHost/#/?m=$m&b=$br';
-  }
-
-  /// Normalize & validate hex color input.
   String _sanitizeHex(String raw) {
     var s = raw.trim();
     if (s.isEmpty) throw Exception('Color cannot be empty');
@@ -388,5 +306,53 @@ class _BrandingAdminPageState extends ConsumerState<BrandingAdminPage> {
     s = s.toUpperCase();
     if (s.length == 7 || s.length == 9) return s;
     throw Exception('Use #RRGGBB or #AARRGGBB for colors');
+  }
+}
+
+class _LogoCard extends StatelessWidget {
+  final String? url;
+  final VoidCallback onTap;
+  const _LogoCard({required this.url, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final onSurface = Theme.of(context).colorScheme.onSurface;
+    return InkWell(
+      onTap: onTap, // POPS the picker immediately
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        height: 96,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: onSurface.withOpacity(0.15)),
+          color: onSurface.withOpacity(0.04),
+        ),
+        alignment: Alignment.center,
+        child: url != null && url!.isNotEmpty
+            ? ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Image.network(
+                  url!,
+                  height: 72,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) =>
+                      Icon(Icons.image_not_supported, color: onSurface),
+                ),
+              )
+            : Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.add_photo_alternate_outlined,
+                      color: onSurface.withOpacity(0.8)),
+                  const SizedBox(width: 8),
+                  Text('Tap to upload logo',
+                      style: TextStyle(
+                        color: onSurface.withOpacity(0.8),
+                        fontWeight: FontWeight.w600,
+                      )),
+                ],
+              ),
+      ),
+    );
   }
 }

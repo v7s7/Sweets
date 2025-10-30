@@ -14,6 +14,10 @@ import 'category_bar.dart';
 import '../../categories/data/categories_repo.dart'; // categoriesStreamProvider
 import '../../categories/data/category.dart';
 
+// NEW: branding (for logo)
+import '../../../core/branding/branding_providers.dart';
+import '../../../core/branding/branding.dart';
+
 class SweetsViewport extends ConsumerStatefulWidget {
   final GlobalKey cartBadgeKey; // AppBar cart button key for fly animation end
   const SweetsViewport({super.key, required this.cartBadgeKey});
@@ -95,6 +99,15 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
   Widget build(BuildContext context) {
     final sweetsAsync = ref.watch(sweetsStreamProvider);
     final catsAsync = ref.watch(categoriesStreamProvider);
+  // Branding (for logo) — safer, no "!" and trims once
+  final Branding? branding = ref.watch(brandingProvider).maybeWhen(
+    data: (b) => b,
+    orElse: () => null,
+  );
+  final String? logoUrl = (() {
+    final s = branding?.logoUrl?.trim();
+    return (s != null && s.isNotEmpty) ? s : null;
+  })();
 
     return sweetsAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -187,9 +200,36 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                           ),
                         ),
 
-                      // 3) Dots + Category bar (over the photo, near bottom)
+   // ---- Centered brand logo: below AppBar, above item carousel ----
+                     if (logoUrl case final url?)
+                       Align(
+                         alignment: Alignment.topCenter,
+                         child: IgnorePointer(
+                           ignoring: true, // don't block gestures
+                           child: Padding(
+                             // status bar + toolbar + small gap (tweakable)
+                             padding: EdgeInsets.only(
+                               top: MediaQuery.of(context).padding.top + kToolbarHeight + 8,
+                             ),
+                             child: AnimatedOpacity(
+                               duration: const Duration(milliseconds: 180),
+                               opacity: state.isDetailOpen ? 0 : 1,
+                               child: _LogoCard(
+                                 url: url,
+                                 // tweak sizes here
+                                 box: 120,    // outer square size
+                                 icon: 100,   // image size
+                                 borderOpacity: 0.10,
+                                 fillOpacity: 0.06,
+                               ),
+                             ),
+                           ),
+                         ),
+                       ),
+
+                      // 4) Dots + Category bar (moved slightly UP)
                       Align(
-                        alignment: const Alignment(0, 0.56),
+                        alignment: const Alignment(0, 0.48), // was 0.56
                         child: IgnorePointer(
                           ignoring: state.isDetailOpen,
                           child: AnimatedOpacity(
@@ -218,7 +258,7 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                         ),
                       ),
 
-                      // 4) Name + price/qty/add
+                      // 5) Name + price/qty/add
                       Align(
                         alignment: const Alignment(0, 0.78),
                         child: IgnorePointer(
@@ -288,7 +328,7 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                         ),
                       ),
 
-                      // 5) Nutrition panel
+                      // 6) Nutrition panel
                       Align(
                         alignment: Alignment.centerRight,
                         child: Padding(
@@ -556,8 +596,7 @@ class _AddIconButton extends StatelessWidget {
   }
 }
 
-/// Instagram-like dots indicator (windowed for large lists) WITHOUT AnimatedSwitcher.
-/// Each dot animates size/opacity individually to avoid duplicate-key issues.
+/// Instagram-like dots indicator (windowed for large lists)
 class _DotsIndicator extends StatelessWidget {
   final int count;
   final int active;
@@ -631,5 +670,45 @@ class _DotsIndicator extends StatelessWidget {
     final len = end - start + 1;
     if (len > max) end -= (len - max);
     return List<int>.generate(end - start + 1, (i) => start + i);
+  }
+}
+/// Center logo card used on the home viewport.
+class _LogoCard extends StatelessWidget {
+  final String url;
+  final double box;          // outer square size
+  final double icon;         // image size inside
+  final double borderOpacity;
+  final double fillOpacity;
+  const _LogoCard({
+    super.key,
+    required this.url,
+    required this.box,
+    required this.icon,
+    required this.borderOpacity,
+    required this.fillOpacity,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final onSurface = Theme.of(context).colorScheme.onSurface;
+    return Container(
+      width: box,
+      height: box,
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(fillOpacity),
+        borderRadius: BorderRadius.circular(box * 0.23),
+        border: Border.all(color: onSurface.withOpacity(borderOpacity)),
+      ),
+      child: Center(
+        child: Image.network(
+          url,
+          width: icon,
+          height: icon,
+          fit: BoxFit.contain,
+          alignment: Alignment.center,
+          errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+        ),
+      ),
+    );
   }
 }

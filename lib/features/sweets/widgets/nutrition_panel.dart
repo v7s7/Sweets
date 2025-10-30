@@ -7,11 +7,16 @@ class NutritionPanel extends StatelessWidget {
   final bool visible;
   final VoidCallback onClose;
 
+  /// Optional footer sentence (admin-configurable per merchant).
+  /// If null/empty, the footer area is hidden.
+  final String? footerText;
+
   const NutritionPanel({
     super.key,
     required this.sweet,
     required this.visible,
     required this.onClose,
+    this.footerText,
   });
 
   @override
@@ -43,6 +48,8 @@ class NutritionPanel extends StatelessWidget {
       entries.add(_Entry('Sugar', _g(sugar)));
     }
 
+    final hasFooter = (footerText != null && footerText!.trim().isNotEmpty);
+
     return IgnorePointer(
       ignoring: !visible,
       child: AnimatedOpacity(
@@ -56,7 +63,7 @@ class NutritionPanel extends StatelessWidget {
             constraints: const BoxConstraints(maxWidth: 280),
             child: DecoratedBox(
               decoration: BoxDecoration(
-                color: Colors.black.withOpacity(0.80), // 0.2 background
+                color: Colors.black.withOpacity(0.80),
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(color: onSurface.withOpacity(0.18)),
               ),
@@ -71,7 +78,7 @@ class NutritionPanel extends StatelessWidget {
                         Text(
                           'Nutrition',
                           style: TextStyle(
-                            color: onSurface, // secondary color
+                            color: onSurface,
                             fontWeight: FontWeight.w800,
                             fontSize: 16,
                           ),
@@ -97,10 +104,32 @@ class NutritionPanel extends StatelessWidget {
                         runSpacing: 10,
                         spacing: 16,
                         children: entries
-                            .map((e) =>
-                                _Tile(label: e.label, value: e.value, onSurface: onSurface))
+                            .map((e) => _Tile(
+                                  label: e.label,
+                                  value: e.value,
+                                  onSurface: onSurface,
+                                ))
                             .toList(),
                       ),
+
+                    // ---------- Optional footer sentence ----------
+                    if (hasFooter) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        height: 1,
+                        color: onSurface.withOpacity(0.10),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        footerText!.trim(),
+                        style: TextStyle(
+                          color: onSurface.withOpacity(0.85),
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                          height: 1.25,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -148,7 +177,7 @@ class _Tile extends StatelessWidget {
           Text(
             value,
             style: TextStyle(
-              color: onSurface, // secondary color
+              color: onSurface,
               fontSize: 14,
               fontWeight: FontWeight.w800,
             ),
