@@ -12,7 +12,7 @@ import 'sweet_image.dart';
 import 'nutrition_panel.dart';
 import 'category_bar.dart';
 import '../../categories/data/categories_repo.dart'; // categoriesStreamProvider
-import '../../categories/data/category.dart'; // <-- ensure Category is in scope
+import '../../categories/data/category.dart';
 
 class SweetsViewport extends ConsumerStatefulWidget {
   final GlobalKey cartBadgeKey; // AppBar cart button key for fly animation end
@@ -33,7 +33,7 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
   double _page = _kInitialPage.toDouble();
   int _qty = 1;
 
-  final GlobalKey _activeImageKey = GlobalKey();
+  final GlobalKey _activeImageKey = GlobalKey(); // used by fly-to-cart
   OverlayEntry? _flyEntry;
 
   ProviderSubscription<AsyncValue<List<Sweet>>>? _sweetsSub;
@@ -109,7 +109,6 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
       data: (allSweets) {
         final onSurface = Theme.of(context).colorScheme.onSurface;
 
-        // Strongly type to avoid nullable-element inference from `const []`.
         final List<Category> cats = catsAsync.value ?? <Category>[];
         final selCat = ref.watch(selectedCategoryIdProvider);
         final selSub = ref.watch(selectedSubcategoryIdProvider);
@@ -117,10 +116,12 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
         final filtered = _filterByCategory(allSweets, cats, selCat, selSub);
 
         if (filtered.isEmpty) {
+          // Keep the UI clean; show categories so user can switch
           return Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const GlassCategoryBar(),
+              const SizedBox(height: 12),
+              const CategoryBar(),
               const SizedBox(height: 24),
               Text('No products in this category.',
                   style: TextStyle(color: onSurface)),
@@ -152,6 +153,7 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
             data: IconThemeData(color: onSurface),
             child: Column(
               children: [
+                // NOTE: Category bar is NOT here anymore (not at the top).
                 Expanded(
                   child: Stack(
                     clipBehavior: Clip.none,
@@ -177,18 +179,6 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                         },
                       ),
 
-                     // 1.5) NEW: floating glass categories bar (iOS-style)
-                     Align(
-                       alignment: const Alignment(0, 0.48), // tweak 0.42..0.55
-                       child: IgnorePointer(
-                         ignoring: state.isDetailOpen,
-                         child: AnimatedOpacity(
-                           duration: const Duration(milliseconds: 180),
-                           opacity: state.isDetailOpen ? 0 : 1,
-                           child: const GlassCategoryBar(),
-                         ),
-                       ),
-                     ),
                       // 2) Mask RIGHT HALF when detail is open so the next item doesn't peek
                       if (state.isDetailOpen)
                         Positioned(
@@ -203,7 +193,41 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                           ),
                         ),
 
-                      // 3) Name, price, counter, and add button — right under the hero
+                      // 3) Dots + Category bar OVER the photo, near the bottom
+                      //    Dots slightly above the category bar
+                      Align(
+                        alignment: const Alignment(0, 0.56),
+                        child: IgnorePointer(
+                          ignoring: state.isDetailOpen,
+                          child: AnimatedOpacity(
+                            opacity: state.isDetailOpen ? 0 : 1,
+                            duration: const Duration(milliseconds: 160),
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 560),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (filtered.length > 1)
+                                    Padding(
+                                      padding:
+                                          const EdgeInsets.only(bottom: 8.0),
+                                      child: _DotsIndicator(
+                                        count: filtered.length,
+                                        active: safeIndex,
+                                        color: onSurface,
+                                      ),
+                                    ),
+                                  // Put the CategoryBar back BELOW the photo area
+                                  // and ABOVE the price/qty/add controls.
+                                  const CategoryBar(),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+
+                      // 4) Name, price, counter, and add button — keep just under the hero
                       Align(
                         alignment: const Alignment(0, 0.78),
                         child: IgnorePointer(
@@ -222,8 +246,8 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                                         const Duration(milliseconds: 180),
                                     transitionBuilder: (c, a) => FadeTransition(
                                       opacity: a,
-                                      child: ScaleTransition(
-                                          scale: a, child: c),
+                                      child:
+                                          ScaleTransition(scale: a, child: c),
                                     ),
                                     child: Text(
                                       current.name,
@@ -276,7 +300,7 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                         ),
                       ),
 
-                      // 4) Nutrition panel on the RIGHT when detail is open
+                      // 5) Nutrition panel on the RIGHT when detail is open
                       Align(
                         alignment: Alignment.centerRight,
                         child: Padding(
@@ -312,11 +336,7 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
       return sweets.where((s) => s.categoryId == selSub).toList();
     }
     if (selCat != null) {
-      // `parentId` is nullable, but `c` itself is not; compare safely.
-      final childIds = cats
-          .where((c) => (c.parentId ?? '') == selCat)
-          .map((c) => c.id);
-
+      final childIds = cats.where((c) => (c.parentId ?? '') == selCat).map((c) => c.id);
       final allowed = <String>{selCat, ...childIds};
       return sweets
           .where((s) => s.categoryId != null && allowed.contains(s.categoryId))
@@ -331,14 +351,16 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
     int i,
     SweetsState state,
   ) {
-    // Offset from the center [-1..1]
+    // Smooth transform (center bigger)
     final t = (_page - i).clamp(-1.0, 1.0);
-    // Emphasis: center bigger, neighbors smaller
     final scale = 1 - (0.18 * t.abs());
     final y = 18 * t.abs();
     final rot = 0.02 * -t;
 
-    final isActive = (_page - i).abs() < 0.5;
+    // IMPORTANT: attach the GlobalKey to EXACTLY ONE page to avoid duplicates.
+    // We use the rounded page index as the single "active host".
+    final int activeHost = _pc.hasClients ? (_pc.page?.round() ?? _kInitialPage) : _kInitialPage;
+    final bool isHost = (i == activeHost);
 
     return Transform.translate(
       offset: Offset(0, y),
@@ -347,10 +369,10 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
         child: Transform.rotate(
           angle: rot,
           child: SweetImage(
-            imageAsset: (sweet.imageAsset ?? ''), // safe
-            isActive: isActive,
+            imageAsset: (sweet.imageAsset ?? ''),
+            isActive: (_page - i).abs() < 0.5,
             isDetailOpen: state.isDetailOpen,
-            hostKey: isActive ? _activeImageKey : null,
+            hostKey: isHost ? _activeImageKey : null, // <- single owner only
             onTap: () =>
                 ref.read(sweetsControllerProvider.notifier).toggleDetail(),
           ),
@@ -367,10 +389,9 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
     if (overlay == null || !mounted) return;
 
     final start = _centerOfKey(_activeImageKey);
-    final end = _centerOfKey(widget.cartBadgeKey); // <- AppBar button key
+    final end = _centerOfKey(widget.cartBadgeKey);
     if (start == null || end == null) return;
 
-    // Remove any existing entry before starting a new animation
     _flyEntry?.remove();
     _flyEntry = null;
 
@@ -489,7 +510,7 @@ class _QtyStepper extends StatelessWidget {
       color: Colors.transparent,
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.30), // neutral dark overlay (no brand color)
+          color: Colors.black.withOpacity(0.30),
           borderRadius: BorderRadius.circular(24),
           border: Border.all(color: Colors.black.withOpacity(0.15)),
         ),
@@ -530,7 +551,6 @@ class _AddIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Outline-only circular button; icon + border use the same color (secondary/onSurface)
     return Semantics(
       button: true,
       label: 'Add to cart',
@@ -540,11 +560,92 @@ class _AddIconButton extends StatelessWidget {
           side: BorderSide(color: onSurface),
           minimumSize: const Size(48, 48),
           padding: EdgeInsets.zero,
-          foregroundColor: onSurface, // icon color
+          foregroundColor: onSurface,
         ),
         onPressed: onTap,
         child: const Icon(Icons.shopping_bag_outlined, size: 22),
       ),
     );
+  }
+}
+
+/// Instagram-like dots indicator (windowed for large lists).
+class _DotsIndicator extends StatelessWidget {
+  final int count;
+  final int active;
+  final Color color;
+
+  const _DotsIndicator({
+    required this.count,
+    required this.active,
+    required this.color,
+  });
+
+  static const int _kMaxDots = 12;
+
+  @override
+  Widget build(BuildContext context) {
+    if (count <= 1) return const SizedBox.shrink();
+    final visible = _visibleIndices(count, active, _kMaxDots);
+
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 180),
+      child: Row(
+        key: ValueKey('$count-$active'),
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          for (int i = 0; i < visible.length; i++)
+            _dot(
+              isActive: visible[i] == active,
+              isEdgeTruncator:
+                  (i == 0 && visible.first > 0) ||
+                  (i == visible.length - 1 && visible.last < count - 1),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _dot({required bool isActive, required bool isEdgeTruncator}) {
+    if (isEdgeTruncator) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 3),
+        child: Container(
+          width: 4,
+          height: 4,
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.20),
+            shape: BoxShape.circle,
+          ),
+        ),
+      );
+    }
+    final double size = isActive ? 8 : 6;
+    final double opacity = isActive ? 0.95 : 0.35;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+      margin: const EdgeInsets.symmetric(horizontal: 3),
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: color.withOpacity(opacity),
+        shape: BoxShape.circle,
+      ),
+    );
+  }
+
+  List<int> _visibleIndices(int count, int active, int max) {
+    if (count <= max) return List<int>.generate(count, (i) => i);
+    final int half = (max / 2).floor();
+    int start = active - half;
+    int end = active + half;
+    if (max.isEven) end -= 1;
+    if (start < 0) { end += -start; start = 0; }
+    if (end > count - 1) { start -= (end - (count - 1)); end = count - 1; }
+    if (start < 0) start = 0;
+    final len = end - start + 1;
+    if (len > max) end -= (len - max);
+    return List<int>.generate(end - start + 1, (i) => start + i);
   }
 }
