@@ -43,7 +43,6 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
     super.initState();
     _pc.addListener(_onPageTick);
 
-    // If data already present on first frame, apply initial index.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final async = ref.read(sweetsStreamProvider);
       final sweets = async.value;
@@ -52,7 +51,6 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
       }
     });
 
-    // Listen to stream provider; when it turns to non-empty data / length changes, apply index.
     _sweetsSub = ref.listenManual<AsyncValue<List<Sweet>>>(
       sweetsStreamProvider,
       (prev, next) {
@@ -116,7 +114,6 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
         final filtered = _filterByCategory(allSweets, cats, selCat, selSub);
 
         if (filtered.isEmpty) {
-          // Keep the UI clean; show categories so user can switch
           return Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -129,7 +126,6 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
           );
         }
 
-        // Keep index in range after filtering
         final state = ref.watch(sweetsControllerProvider);
         final safeIndex = state.index % filtered.length;
         if (safeIndex != state.index) {
@@ -145,7 +141,6 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
         final size = MediaQuery.of(context).size;
         final surface = Theme.of(context).colorScheme.surface;
 
-        // Enforce global text/icon color for this screen too.
         return DefaultTextStyle.merge(
           style:
               Theme.of(context).textTheme.bodyMedium!.copyWith(color: onSurface),
@@ -153,12 +148,11 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
             data: IconThemeData(color: onSurface),
             child: Column(
               children: [
-                // NOTE: Category bar is NOT here anymore (not at the top).
                 Expanded(
                   child: Stack(
                     clipBehavior: Clip.none,
                     children: [
-                      // 1) Carousel with 15/70/15 peeks; disable scroll while detail open
+                      // 1) Carousel
                       PageView.builder(
                         controller: _pc,
                         padEnds: true,
@@ -179,7 +173,7 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                         },
                       ),
 
-                      // 2) Mask RIGHT HALF when detail is open so the next item doesn't peek
+                      // 2) Mask right half when detail is open
                       if (state.isDetailOpen)
                         Positioned(
                           top: 0,
@@ -193,8 +187,7 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                           ),
                         ),
 
-                      // 3) Dots + Category bar OVER the photo, near the bottom
-                      //    Dots slightly above the category bar
+                      // 3) Dots + Category bar (over the photo, near bottom)
                       Align(
                         alignment: const Alignment(0, 0.56),
                         child: IgnorePointer(
@@ -217,8 +210,6 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                                         color: onSurface,
                                       ),
                                     ),
-                                  // Put the CategoryBar back BELOW the photo area
-                                  // and ABOVE the price/qty/add controls.
                                   const CategoryBar(),
                                 ],
                               ),
@@ -227,7 +218,7 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                         ),
                       ),
 
-                      // 4) Name, price, counter, and add button — keep just under the hero
+                      // 4) Name + price/qty/add
                       Align(
                         alignment: const Alignment(0, 0.78),
                         child: IgnorePointer(
@@ -240,7 +231,6 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                               child: Column(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  // Name (bold, centered)
                                   AnimatedSwitcher(
                                     duration:
                                         const Duration(milliseconds: 180),
@@ -263,8 +253,6 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                                     ),
                                   ),
                                   const SizedBox(height: 6),
-
-                                  // Price (updates with qty) + counter + compact add button
                                   Row(
                                     mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
@@ -300,7 +288,7 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                         ),
                       ),
 
-                      // 5) Nutrition panel on the RIGHT when detail is open
+                      // 5) Nutrition panel
                       Align(
                         alignment: Alignment.centerRight,
                         child: Padding(
@@ -325,7 +313,6 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
     );
   }
 
-  /// Filter sweets by selected category/subcategory.
   List<Sweet> _filterByCategory(
     List<Sweet> sweets,
     List<Category> cats,
@@ -336,7 +323,8 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
       return sweets.where((s) => s.categoryId == selSub).toList();
     }
     if (selCat != null) {
-      final childIds = cats.where((c) => (c.parentId ?? '') == selCat).map((c) => c.id);
+      final childIds =
+          cats.where((c) => (c.parentId ?? '') == selCat).map((c) => c.id);
       final allowed = <String>{selCat, ...childIds};
       return sweets
           .where((s) => s.categoryId != null && allowed.contains(s.categoryId))
@@ -351,15 +339,14 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
     int i,
     SweetsState state,
   ) {
-    // Smooth transform (center bigger)
     final t = (_page - i).clamp(-1.0, 1.0);
     final scale = 1 - (0.18 * t.abs());
     final y = 18 * t.abs();
     final rot = 0.02 * -t;
 
-    // IMPORTANT: attach the GlobalKey to EXACTLY ONE page to avoid duplicates.
-    // We use the rounded page index as the single "active host".
-    final int activeHost = _pc.hasClients ? (_pc.page?.round() ?? _kInitialPage) : _kInitialPage;
+    // Single owner of the GlobalKey to avoid duplicates
+    final int activeHost =
+        _pc.hasClients ? (_pc.page?.round() ?? _kInitialPage) : _kInitialPage;
     final bool isHost = (i == activeHost);
 
     return Transform.translate(
@@ -372,7 +359,7 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
             imageAsset: (sweet.imageAsset ?? ''),
             isActive: (_page - i).abs() < 0.5,
             isDetailOpen: state.isDetailOpen,
-            hostKey: isHost ? _activeImageKey : null, // <- single owner only
+            hostKey: isHost ? _activeImageKey : null,
             onTap: () =>
                 ref.read(sweetsControllerProvider.notifier).toggleDetail(),
           ),
@@ -569,7 +556,8 @@ class _AddIconButton extends StatelessWidget {
   }
 }
 
-/// Instagram-like dots indicator (windowed for large lists).
+/// Instagram-like dots indicator (windowed for large lists) WITHOUT AnimatedSwitcher.
+/// Each dot animates size/opacity individually to avoid duplicate-key issues.
 class _DotsIndicator extends StatelessWidget {
   final int count;
   final int active;
@@ -588,21 +576,17 @@ class _DotsIndicator extends StatelessWidget {
     if (count <= 1) return const SizedBox.shrink();
     final visible = _visibleIndices(count, active, _kMaxDots);
 
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 180),
-      child: Row(
-        key: ValueKey('$count-$active'),
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          for (int i = 0; i < visible.length; i++)
-            _dot(
-              isActive: visible[i] == active,
-              isEdgeTruncator:
-                  (i == 0 && visible.first > 0) ||
-                  (i == visible.length - 1 && visible.last < count - 1),
-            ),
-        ],
-      ),
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        for (int i = 0; i < visible.length; i++)
+          _dot(
+            isActive: visible[i] == active,
+            isEdgeTruncator:
+                (i == 0 && visible.first > 0) ||
+                (i == visible.length - 1 && visible.last < count - 1),
+          ),
+      ],
     );
   }
 
