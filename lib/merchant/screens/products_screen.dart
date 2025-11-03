@@ -130,10 +130,22 @@ class ProductsScreen extends StatelessWidget {
                     leading: _ProductThumb(imageUrl: imageUrl),
                     title: Text(name),
                     subtitle: Text(subtitle),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.edit),
-                      onPressed: () => _openEditor(context, merchantId, branchId, d),
-                    ),
+                   trailing: Row(
+                     mainAxisSize: MainAxisSize.min,
+                     children: [
+                       IconButton(
+                         tooltip: 'Edit',
+                         icon: const Icon(Icons.edit),
+                         onPressed: () => _openEditor(context, merchantId, branchId, d),
+                       ),
+                       IconButton(
+                         tooltip: 'Delete',
+                         icon: const Icon(Icons.delete_outline),
+                         color: Theme.of(context).colorScheme.error,
+                         onPressed: () => _confirmDelete(context, d),
+                       ),
+                     ],
+                   ),
                   );
                 },
               );
@@ -164,6 +176,52 @@ class ProductsScreen extends StatelessWidget {
     );
   }
 }
+ 
+   Future<void> _confirmDelete(
+     BuildContext context,
+     QueryDocumentSnapshot<Map<String, dynamic>> d,
+   ) async {
+     final name = (d.data()['name'] ?? d.id).toString();
+ 
+     final ok = await showDialog<bool>(
+       context: context,
+       builder: (ctx) => AlertDialog(
+         title: const Text('Delete product?'),
+         content: Text('This will permanently remove "$name".'),
+         actions: [
+           TextButton(
+             onPressed: () => Navigator.pop(ctx, false),
+             child: const Text('Cancel'),
+           ),
+           FilledButton.tonal(
+             onPressed: () => Navigator.pop(ctx, true),
+             style: FilledButton.styleFrom(
+               foregroundColor: Theme.of(ctx).colorScheme.onErrorContainer,
+               backgroundColor: Theme.of(ctx).colorScheme.errorContainer,
+             ),
+             child: const Text('Delete'),
+           ),
+         ],
+       ),
+     );
+ 
+     if (ok != true) return;
+ 
+     try {
+       await d.reference.delete();
+       if (context.mounted) {
+         ScaffoldMessenger.of(context).showSnackBar(
+           SnackBar(content: Text('Deleted "$name".')),
+         );
+       }
+     } catch (e) {
+       if (context.mounted) {
+         ScaffoldMessenger.of(context).showSnackBar(
+           SnackBar(content: Text('Delete failed: $e')),
+         );
+       }
+     }
+   }
 
 class _ProductThumb extends StatelessWidget {
   final String imageUrl;
