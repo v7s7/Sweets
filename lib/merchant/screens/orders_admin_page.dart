@@ -6,18 +6,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/branding/branding_providers.dart';
 import '../../features/orders/data/order_models.dart' as om;
 
-/// ===== Filter enum =====
-enum OrdersFilter { all, pending, accepted, preparing, ready, served, cancelled }
+/// ===== Filters =====
+enum OrdersFilter { all, pending, preparing, ready, served, cancelled }
 
 extension OrdersFilterX on OrdersFilter {
   String? get statusString {
     switch (this) {
       case OrdersFilter.all:
-        return null;
+        return null; // "All" excludes cancelled below
       case OrdersFilter.pending:
         return 'pending';
-      case OrdersFilter.accepted:
-        return 'accepted';
       case OrdersFilter.preparing:
         return 'preparing';
       case OrdersFilter.ready:
@@ -28,11 +26,29 @@ extension OrdersFilterX on OrdersFilter {
         return 'cancelled';
     }
   }
+
+  String get label {
+    switch (this) {
+      case OrdersFilter.all:
+        return 'All';
+      case OrdersFilter.pending:
+        return 'Pending';
+      case OrdersFilter.preparing:
+        return 'Preparing';
+      case OrdersFilter.ready:
+        return 'Ready';
+      case OrdersFilter.served:
+        return 'Served';
+      case OrdersFilter.cancelled:
+        return 'Cancelled';
+    }
+  }
 }
 
-final ordersFilterProvider = StateProvider<OrdersFilter>((_) => OrdersFilter.all);
+final ordersFilterProvider =
+    StateProvider<OrdersFilter>((_) => OrdersFilter.all);
 
-/// Lightweight admin model mapped from Firestore.
+/// ===== Lightweight admin models =====
 class _AdminOrder {
   final String id;
   final String orderNo;
@@ -57,12 +73,19 @@ class _AdminItem {
   final String name;
   final double price;
   final int qty;
-  final String? note; // optional per-item note
-  _AdminItem({required this.name, required this.price, required this.qty, this.note});
+  final String? note;
+
+  _AdminItem({
+    required this.name,
+    required this.price,
+    required this.qty,
+    this.note,
+  });
 }
 
-/// Stream recent orders (client-side filter).
-final ordersStreamProvider = StreamProvider.autoDispose<List<_AdminOrder>>((ref) {
+/// ===== Orders stream (recent first) =====
+final ordersStreamProvider =
+    StreamProvider.autoDispose<List<_AdminOrder>>((ref) {
   final m = ref.watch(merchantIdProvider);
   final b = ref.watch(branchIdProvider);
 
@@ -82,19 +105,20 @@ final ordersStreamProvider = StreamProvider.autoDispose<List<_AdminOrder>>((ref)
       final dt = ts is Timestamp ? ts.toDate() : DateTime.now();
 
       final rawItems = (data['items'] as List?) ?? const [];
-      final items = rawItems
-          .whereType<Map>()
-          .map((m) => _AdminItem(
-                name: (m['name'] ?? '').toString(),
-                price: (m['price'] is num)
-                    ? (m['price'] as num).toDouble()
-                    : double.tryParse('${m['price']}') ?? 0.0,
-                qty: (m['qty'] is num)
-                    ? (m['qty'] as num).toInt()
-                    : int.tryParse('${m['qty']}') ?? 0,
-                note: (m['note'] as String?)?.trim(),
-              ))
-          .toList();
+      final items = rawItems.whereType<Map>().map((m) {
+        final price = (m['price'] is num)
+            ? (m['price'] as num).toDouble()
+            : double.tryParse('${m['price']}') ?? 0.0;
+        final qty = (m['qty'] is num)
+            ? (m['qty'] as num).toInt()
+            : int.tryParse('${m['qty']}') ?? 0;
+        return _AdminItem(
+          name: (m['name'] ?? '').toString(),
+          price: price,
+          qty: qty,
+          note: (m['note'] as String?)?.trim(),
+        );
+      }).toList();
 
       final subtotal = (data['subtotal'] is num)
           ? (data['subtotal'] as num).toDouble()
@@ -113,6 +137,7 @@ final ordersStreamProvider = StreamProvider.autoDispose<List<_AdminOrder>>((ref)
   });
 });
 
+/// ===== Status helpers =====
 om.OrderStatus _statusFromString(String s) {
   switch (s) {
     case 'pending':
@@ -129,23 +154,6 @@ om.OrderStatus _statusFromString(String s) {
       return om.OrderStatus.cancelled;
     default:
       return om.OrderStatus.pending;
-  }
-}
-
-String _label(om.OrderStatus s) {
-  switch (s) {
-    case om.OrderStatus.pending:
-      return 'Pending';
-    case om.OrderStatus.accepted:
-      return 'Accepted';
-    case om.OrderStatus.preparing:
-      return 'Preparing';
-    case om.OrderStatus.ready:
-      return 'Ready';
-    case om.OrderStatus.served:
-      return 'Served';
-    case om.OrderStatus.cancelled:
-      return 'Cancelled';
   }
 }
 
@@ -166,7 +174,24 @@ String _toFirestore(om.OrderStatus s) {
   }
 }
 
-/// ====== PAGE ======
+String _label(om.OrderStatus s) {
+  switch (s) {
+    case om.OrderStatus.pending:
+      return 'Pending';
+    case om.OrderStatus.accepted:
+      return 'Accepted';
+    case om.OrderStatus.preparing:
+      return 'Preparing';
+    case om.OrderStatus.ready:
+      return 'Ready';
+    case om.OrderStatus.served:
+      return 'Served';
+    case om.OrderStatus.cancelled:
+      return 'Cancelled';
+  }
+}
+
+/// ===== Page =====
 class OrdersAdminPage extends ConsumerWidget {
   const OrdersAdminPage({super.key});
 
@@ -174,7 +199,6 @@ class OrdersAdminPage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(ordersStreamProvider);
     final selected = ref.watch(ordersFilterProvider);
-
     final onSurface = Theme.of(context).colorScheme.onSurface;
 
     return Scaffold(
@@ -185,6 +209,7 @@ class OrdersAdminPage extends ConsumerWidget {
       body: Column(
         children: [
           _FiltersRow(selected: selected),
+          const Divider(height: 1),
           Expanded(
             child: async.when(
               loading: () => const Center(child: CircularProgressIndicator()),
@@ -196,9 +221,12 @@ class OrdersAdminPage extends ConsumerWidget {
                 ),
               ),
               data: (all) {
+                // “All” excludes cancelled
                 final f = selected.statusString;
                 final list = (f == null)
                     ? all
+                        .where((o) => o.status != om.OrderStatus.cancelled)
+                        .toList()
                     : all.where((o) => _toFirestore(o.status) == f).toList();
 
                 if (list.isEmpty) {
@@ -229,12 +257,12 @@ class _FiltersRow extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    Widget chip(OrdersFilter f, String label) {
+    Widget chip(OrdersFilter f) {
       final isSel = selected == f;
       return Padding(
         padding: const EdgeInsets.only(right: 8),
         child: FilterChip(
-          label: Text(label),
+          label: Text(f.label),
           selected: isSel,
           onSelected: (_) => ref.read(ordersFilterProvider.notifier).state = f,
         ),
@@ -246,20 +274,19 @@ class _FiltersRow extends ConsumerWidget {
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       child: Row(
         children: [
-          chip(OrdersFilter.all, 'All'),
-          chip(OrdersFilter.pending, 'Pending'),
-          chip(OrdersFilter.accepted, 'Accepted'),
-          chip(OrdersFilter.preparing, 'Preparing'),
-          chip(OrdersFilter.ready, 'Ready'),
-          chip(OrdersFilter.served, 'Served'),
-          chip(OrdersFilter.cancelled, 'Cancelled'),
+          chip(OrdersFilter.all),
+          chip(OrdersFilter.pending),
+          chip(OrdersFilter.preparing),
+          chip(OrdersFilter.ready),
+          chip(OrdersFilter.served),
+          chip(OrdersFilter.cancelled),
         ],
       ),
     );
   }
 }
 
-/// ===== Order tile with status changer =====
+/// ===== Order tile =====
 class _OrderTile extends ConsumerWidget {
   final _AdminOrder order;
   const _OrderTile({required this.order});
@@ -268,10 +295,11 @@ class _OrderTile extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final onSurface = Theme.of(context).colorScheme.onSurface;
     final notesCount =
-        order.items.where((it) => (it.note ?? '').isNotEmpty).length;
+        order.items.where((it) => (it.note ?? '').trim().isNotEmpty).length;
 
     return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      dense: false,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       title: Row(
         children: [
           Text(
@@ -321,7 +349,8 @@ class _OrderTile extends ConsumerWidget {
             if (notesCount > 0) ...[
               Text('•', style: TextStyle(color: onSurface.withOpacity(0.5))),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
                   color: onSurface.withOpacity(0.06),
                   borderRadius: BorderRadius.circular(999),
@@ -375,7 +404,8 @@ class _OrderTile extends ConsumerWidget {
 
             return ListTile(
               dense: true,
-              title: Text(it.name, style: const TextStyle(fontWeight: FontWeight.w700)),
+              title: Text(it.name,
+                  style: const TextStyle(fontWeight: FontWeight.w700)),
               subtitle: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -411,27 +441,62 @@ class _OrderTile extends ConsumerWidget {
   }
 }
 
+/// ===== Status pill (with translucent “shadow” tints) =====
 class _StatusPill extends StatelessWidget {
   final om.OrderStatus status;
   const _StatusPill({required this.status});
 
   @override
   Widget build(BuildContext context) {
-    final onSurface = Theme.of(context).colorScheme.onSurface;
+    final scheme = Theme.of(context).colorScheme;
+    final onSurface = scheme.onSurface;
+
+    // Base neutral
+    Color bg = onSurface.withOpacity(0.06);
+    Color border = Colors.transparent;
+    Color fg = onSurface;
+    List<BoxShadow> shadow = const [];
+
+    if (status == om.OrderStatus.served || status == om.OrderStatus.cancelled) {
+      final bool served = status == om.OrderStatus.served;
+      final Color tint = served
+          ? const Color(0xFF22C55E) // green-500
+          : const Color(0xFFEF4444);  // red-500
+
+      bg = tint.withOpacity(served ? 0.16 : 0.12);
+      border = tint.withOpacity(served ? 0.28 : 0.22);
+      fg = onSurface.withOpacity(0.95);
+      shadow = [
+        BoxShadow(
+          color: tint.withOpacity(0.16),
+          blurRadius: 12,
+          spreadRadius: 0,
+          offset: const Offset(0, 2),
+        ),
+      ];
+    }
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: onSurface.withOpacity(0.06),
+        color: bg,
         borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: border),
+        boxShadow: shadow,
       ),
       child: Text(
         _label(status),
-        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: onSurface),
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+          color: fg,
+        ),
       ),
     );
   }
 }
 
+/// ===== Status changer (rules + “advance” button) =====
 class _StatusChanger extends ConsumerStatefulWidget {
   final _AdminOrder order;
   const _StatusChanger({required this.order});
@@ -441,64 +506,193 @@ class _StatusChanger extends ConsumerStatefulWidget {
 }
 
 class _StatusChangerState extends ConsumerState<_StatusChanger> {
-  static const _flow = <om.OrderStatus>[
-    om.OrderStatus.pending,
-    om.OrderStatus.accepted,
-    om.OrderStatus.preparing,
-    om.OrderStatus.ready,
-    om.OrderStatus.served,
-    om.OrderStatus.cancelled,
-  ];
-
   bool _busy = false;
 
   @override
   Widget build(BuildContext context) {
-    return Row(mainAxisSize: MainAxisSize.min, children: [
-      DropdownButton<om.OrderStatus>(
-        value: widget.order.status,
-        onChanged: _busy ? null : (s) => _setStatus(s!),
-        items: _flow
-            .map((s) => DropdownMenuItem(
-                  value: s,
-                  child: Text(_label(s)),
-                ))
-            .toList(),
-      ),
-      const SizedBox(width: 6),
-      IconButton(
-        tooltip: 'Cancel order',
-        icon: const Icon(Icons.cancel_outlined),
-        onPressed: _busy || widget.order.status == om.OrderStatus.cancelled
-            ? null
-            : () => _setStatus(om.OrderStatus.cancelled),
-      ),
-      IconButton(
-        tooltip: 'Mark served',
-        icon: const Icon(Icons.check_circle_outline),
-        onPressed: _busy || widget.order.status == om.OrderStatus.served
-            ? null
-            : () => _setStatus(om.OrderStatus.served),
-      ),
-    ]);
+    final cur = widget.order.status;
+    final nextOptions = _nextOptionsFor(cur); // forward step + cancel
+
+    // Dropdown shows CURRENT status; menu lists current + forward options.
+    final items = <om.OrderStatus>[cur, ...nextOptions];
+
+    final disabled =
+        cur == om.OrderStatus.served || cur == om.OrderStatus.cancelled;
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        DropdownButton<om.OrderStatus>(
+          value: cur,
+          isDense: true,
+          onChanged: _busy || disabled
+              ? null
+              : (s) async {
+                  if (s == null || s == cur) {
+                    _hint(context);
+                    return;
+                  }
+                  // never go back to pending
+                  if (s == om.OrderStatus.pending) {
+                    _hint(context);
+                    return;
+                  }
+                  if (s == om.OrderStatus.accepted) {
+                    await _acceptAndStartPreparing();
+                  } else {
+                    await _setStatus(s);
+                  }
+                },
+          items: items
+              .map((s) => DropdownMenuItem(
+                    value: s,
+                    child: Text(
+                      s == cur ? '${_label(s)} (current)' : _label(s),
+                    ),
+                  ))
+              .toList(),
+        ),
+        const SizedBox(width: 6),
+        IconButton(
+          tooltip: 'Cancel order',
+          icon: const Icon(Icons.cancel_outlined),
+          onPressed: _busy || disabled
+              ? null
+              : () => _setStatus(om.OrderStatus.cancelled),
+        ),
+        const SizedBox(width: 2),
+        // ✓ = advance to next step (pending→accepted→preparing, preparing→ready, ready→served)
+        IconButton(
+          tooltip: 'Advance to next step',
+          icon: const Icon(Icons.check_circle_outline),
+          onPressed: _busy || disabled ? null : _advance,
+        ),
+      ],
+    );
   }
 
-  Future<void> _setStatus(om.OrderStatus newStatus) async {
+  void _hint(BuildContext context) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Choose a next step from the menu or click the ✓ button.'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
+  om.OrderStatus? _nextOf(om.OrderStatus s) {
+    switch (s) {
+      case om.OrderStatus.pending:
+        return om.OrderStatus.preparing; // via accept→preparing
+      case om.OrderStatus.accepted:
+        return om.OrderStatus.preparing;
+      case om.OrderStatus.preparing:
+        return om.OrderStatus.ready;
+      case om.OrderStatus.ready:
+        return om.OrderStatus.served;
+      case om.OrderStatus.served:
+      case om.OrderStatus.cancelled:
+        return null;
+    }
+  }
+
+  List<om.OrderStatus> _nextOptionsFor(om.OrderStatus cur) {
+    switch (cur) {
+      case om.OrderStatus.pending:
+        return const [om.OrderStatus.preparing, om.OrderStatus.cancelled];
+      case om.OrderStatus.accepted:
+        return const [om.OrderStatus.preparing, om.OrderStatus.cancelled];
+      case om.OrderStatus.preparing:
+        return const [om.OrderStatus.ready, om.OrderStatus.cancelled];
+      case om.OrderStatus.ready:
+        return const [om.OrderStatus.served, om.OrderStatus.cancelled];
+      case om.OrderStatus.served:
+      case om.OrderStatus.cancelled:
+        return const <om.OrderStatus>[];
+    }
+  }
+
+  Future<void> _advance() async {
+    final cur = widget.order.status;
+    if (cur == om.OrderStatus.pending) {
+      await _acceptAndStartPreparing();
+      return;
+    }
+    final next = _nextOf(cur);
+    if (next == null) return;
+    await _setStatus(next);
+  }
+
+  Future<void> _acceptAndStartPreparing() async {
     setState(() => _busy = true);
     final m = ref.read(merchantIdProvider);
     final b = ref.read(branchIdProvider);
+    final doc = FirebaseFirestore.instance
+        .collection('merchants')
+        .doc(m)
+        .collection('branches')
+        .doc(b)
+        .collection('orders')
+        .doc(widget.order.id);
+
     try {
-      await FirebaseFirestore.instance
-          .collection('merchants')
-          .doc(m)
-          .collection('branches')
-          .doc(b)
-          .collection('orders')
-          .doc(widget.order.id)
-          .update({
-        'status': _toFirestore(newStatus),
+      await doc.update({
+        'status': _toFirestore(om.OrderStatus.accepted),
+        'acceptedAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
+      await doc.update({
+        'status': _toFirestore(om.OrderStatus.preparing),
+        'preparingAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _setStatus(om.OrderStatus newStatus) async {
+    final cur = widget.order.status;
+    if (newStatus == om.OrderStatus.pending && cur != om.OrderStatus.pending) {
+      return;
+    }
+
+    setState(() => _busy = true);
+    final m = ref.read(merchantIdProvider);
+    final b = ref.read(branchIdProvider);
+    final doc = FirebaseFirestore.instance
+        .collection('merchants')
+        .doc(m)
+        .collection('branches')
+        .doc(b)
+        .collection('orders')
+        .doc(widget.order.id);
+
+    try {
+      final payload = <String, dynamic>{
+        'status': _toFirestore(newStatus),
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+
+      switch (newStatus) {
+        case om.OrderStatus.preparing:
+          payload['preparingAt'] = FieldValue.serverTimestamp();
+          break;
+        case om.OrderStatus.ready:
+          payload['readyAt'] = FieldValue.serverTimestamp();
+          break;
+        case om.OrderStatus.served:
+          payload['servedAt'] = FieldValue.serverTimestamp();
+          break;
+        case om.OrderStatus.cancelled:
+          payload['cancelledAt'] = FieldValue.serverTimestamp();
+          break;
+        case om.OrderStatus.pending:
+        case om.OrderStatus.accepted:
+          break;
+      }
+
+      await doc.update(payload);
     } finally {
       if (mounted) setState(() => _busy = false);
     }

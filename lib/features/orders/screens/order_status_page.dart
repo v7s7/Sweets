@@ -1,3 +1,4 @@
+// lib/features/orders/screens/order_status_page.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -11,6 +12,7 @@ class OrderStatusPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final stream = ref.watch(orderServiceProvider).watchOrder(orderId);
+    final cs = Theme.of(context).colorScheme;
 
     return Scaffold(
       appBar: AppBar(
@@ -42,6 +44,12 @@ class OrderStatusPage extends ConsumerWidget {
           final finished = order.status == OrderStatus.served ||
               order.status == OrderStatus.cancelled;
 
+          // Soft, theme-safe tints (very transparent)
+          final servedBg = const Color(0xFF22C55E).withOpacity(0.12);
+          final servedBorder = const Color(0xFF22C55E).withOpacity(0.22);
+          final cancelBg = const Color(0xFFEF4444).withOpacity(0.12);
+          final cancelBorder = const Color(0xFFEF4444).withOpacity(0.22);
+
           return Padding(
             padding: const EdgeInsets.all(16.0),
             child: Column(
@@ -52,20 +60,27 @@ class OrderStatusPage extends ConsumerWidget {
                 if (finished)
                   Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 10),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                     decoration: BoxDecoration(
                       color: order.status == OrderStatus.cancelled
-                          ? const Color(0xFFFFE6E6)
-                          : const Color(0xFFE9FBE6),
+                          ? cancelBg
+                          : servedBg,
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: const Color(0x11000000)),
+                      border: Border.all(
+                        color: order.status == OrderStatus.cancelled
+                            ? cancelBorder
+                            : servedBorder,
+                      ),
                     ),
                     child: Text(
                       order.status == OrderStatus.cancelled
                           ? 'This order was cancelled.'
                           : 'Enjoy! This order has been served.',
-                      style: const TextStyle(fontWeight: FontWeight.w700),
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: cs.onSurface.withOpacity(0.9),
+                      ),
                     ),
                   ),
 
@@ -75,7 +90,7 @@ class OrderStatusPage extends ConsumerWidget {
                   elevation: 0,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(16),
-                    side: const BorderSide(color: Color(0x11000000)),
+                    side: BorderSide(color: cs.outlineVariant.withOpacity(0.6)),
                   ),
                   child: Padding(
                     padding: const EdgeInsets.all(16.0),
@@ -93,8 +108,11 @@ class OrderStatusPage extends ConsumerWidget {
                         const Spacer(),
                         Text(
                           order.subtotal.toStringAsFixed(3), // BHD, 3dp
-                          style: const TextStyle(
-                              fontWeight: FontWeight.w800, fontSize: 16),
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 16,
+                            color: cs.onSurface,
+                          ),
                         ),
                       ],
                     ),
@@ -105,32 +123,37 @@ class OrderStatusPage extends ConsumerWidget {
                 Expanded(
                   child: ListView.separated(
                     itemCount: order.items.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    separatorBuilder: (_, __) =>
+                        Divider(height: 1, color: cs.outlineVariant),
                     itemBuilder: (context, i) {
-// inside itemBuilder of ListView.separated:
-final it = order.items[i];
-return ListTile(
-  title: Text(it.name, style: const TextStyle(fontWeight: FontWeight.w700)),
-  subtitle: Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      Text(it.price.toStringAsFixed(3)),
-      if ((it.note ?? '').trim().isNotEmpty) ...[
-        const SizedBox(height: 2),
-        Text(
-          '📝 ${it.note!.trim()}',
-          style: TextStyle(
-            fontStyle: FontStyle.italic,
-            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.85),
-          ),
-        ),
-      ],
-    ],
-  ),
-  trailing: Text('x${it.qty}'),
-);
+                      final it = order.items[i];
+                      final note = (it.note ?? '').trim();
+                      final hasNote = note.isNotEmpty;
 
+                      return ListTile(
+                        title: Text(
+                          it.name,
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(it.price.toStringAsFixed(3)),
+                            if (hasNote) ...[
+                              const SizedBox(height: 2),
+                              Text(
+                                '📝 $note',
+                                style: TextStyle(
+                                  fontStyle: FontStyle.italic,
+                                  color: cs.onSurface.withOpacity(0.85),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                        trailing: Text('x${it.qty}'),
+                      );
                     },
                   ),
                 ),
@@ -149,8 +172,10 @@ class _StatusPills extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
     // Customer-facing steps
-    final steps = const [
+    const steps = [
       OrderStatus.pending,
       OrderStatus.accepted,
       OrderStatus.preparing,
@@ -161,25 +186,27 @@ class _StatusPills extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: steps.map((s) {
         final active = _indexOf(status) >= _indexOf(s);
+        final bg = active ? cs.primary : cs.surfaceVariant;
+        final fg = active ? cs.onPrimary : cs.onSurface;
         return AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
-            color: active ? Colors.black : Colors.white,
+            color: bg,
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: const Color(0x22000000)),
-            boxShadow: const [
+            border: Border.all(color: cs.outlineVariant),
+            boxShadow: [
               BoxShadow(
-                color: Color(0x12000000),
+                color: cs.shadow.withOpacity(0.06),
                 blurRadius: 8,
-                offset: Offset(0, 4),
-              )
+                offset: const Offset(0, 4),
+              ),
             ],
           ),
           child: Text(
             _label(s),
             style: TextStyle(
-              color: active ? Colors.white : Colors.black87,
+              color: fg,
               fontWeight: FontWeight.w800,
               fontSize: 12,
             ),
