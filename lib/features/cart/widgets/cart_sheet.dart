@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../sweets/data/sweets_repo.dart'; // use sweetsStreamProvider
+import '../../sweets/data/sweets_repo.dart'; // sweetsStreamProvider
 import '../../sweets/data/sweet.dart';
 import '../state/cart_controller.dart';
 
@@ -13,7 +13,6 @@ import '../../../core/config/app_config.dart';
 
 class CartSheet extends ConsumerWidget {
   final VoidCallback? onConfirm;
-
   const CartSheet({super.key, this.onConfirm});
 
   @override
@@ -52,8 +51,8 @@ class CartSheet extends ConsumerWidget {
                 ),
               ),
               const SizedBox(height: 12),
-              Row(
-                children: const [
+              const Row(
+                children: [
                   Text(
                     'Your Order',
                     style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
@@ -61,7 +60,7 @@ class CartSheet extends ConsumerWidget {
                 ],
               ),
               const SizedBox(height: 12),
-              Text(
+              const Text(
                 'Error loading products.\nPlease try again.',
                 textAlign: TextAlign.center,
               ),
@@ -71,33 +70,26 @@ class CartSheet extends ConsumerWidget {
         ),
       ),
       data: (sweets) {
-        // Resolve items (skip IDs that no longer exist in repo)
-        final lines = <_CartLine>[];
-        double subtotal = 0.0;
-
-        cart.items.forEach((id, qty) {
-          final Sweet s = sweets.firstWhere(
-            (e) => e.id == id,
-            orElse: () => const Sweet(
-              id: '__missing__',
-              name: 'Item removed',
-              imageAsset: '',
-              calories: 0,
-              protein: 0.0,
-              carbs: 0.0,
-              fat: 0.0,
-              price: 0.0,
-            ),
-          );
-          if (s.id != '__missing__') {
-            lines.add(_CartLine(sweet: s, qty: qty));
-            subtotal += s.price * qty;
+        // Build view lines from cart state, refreshing Sweet from repo if present
+        final List<CartLine> lines = [];
+        for (final l in cart.asList) {
+          Sweet? updated;
+          for (final s in sweets) {
+            if (s.id == l.sweet.id) {
+              updated = s;
+              break;
+            }
           }
-        });
+          if (updated != null) {
+            lines.add(l.copyWith(sweet: updated));
+          }
+          // If product missing from repo, skip the line silently
+        }
 
+        final subtotal = lines.fold<double>(0.0, (sum, l) => sum + l.lineTotal);
         final onSurface = Theme.of(context).colorScheme.onSurface;
 
-        // Force the confirm button to always *look* disabled, in both states.
+        // Keep the "always disabled" visual style
         final Color _fgDisabled = onSurface.withOpacity(0.38);
         final Color _bgDisabled = onSurface.withOpacity(0.12);
         final ButtonStyle _confirmStyle = ButtonStyle(
@@ -132,8 +124,7 @@ class CartSheet extends ConsumerWidget {
                   children: [
                     const Text(
                       'Your Order',
-                      style:
-                          TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
                     ),
                     const Spacer(),
                     Text(
@@ -154,8 +145,7 @@ class CartSheet extends ConsumerWidget {
                             size: 24, color: onSurface.withOpacity(0.5)),
                         const SizedBox(width: 8),
                         Text('Cart is empty',
-                            style:
-                                TextStyle(color: onSurface.withOpacity(0.6))),
+                            style: TextStyle(color: onSurface.withOpacity(0.6))),
                       ],
                     ),
                   )
@@ -174,16 +164,15 @@ class CartSheet extends ConsumerWidget {
                   children: [
                     const Text(
                       'Subtotal',
-                      style: TextStyle(
-                          fontWeight: FontWeight.w700, fontSize: 16),
+                      style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
                     ),
                     const Spacer(),
                     Text(
-                      subtotal.toStringAsFixed(3), // BHD: 3 decimals
+                      subtotal.toStringAsFixed(3), // BHD 3dp
                       style: TextStyle(
                         fontWeight: FontWeight.w800,
                         fontSize: 18,
-                        color: onSurface, // use secondary/onSurface
+                        color: onSurface,
                       ),
                     ),
                   ],
@@ -196,12 +185,14 @@ class CartSheet extends ConsumerWidget {
                     onPressed: lines.isEmpty
                         ? null
                         : () async {
+                            // One OrderItem per line, preserve note
                             final items = lines
                                 .map((l) => OrderItem(
                                       productId: l.sweet.id,
                                       name: l.sweet.name,
                                       price: l.sweet.price,
                                       qty: l.qty,
+                                      note: l.note, // keep per-line note
                                     ))
                                 .toList();
 
@@ -228,7 +219,7 @@ class CartSheet extends ConsumerWidget {
                           },
                     icon: const Icon(Icons.check_circle_outline),
                     label: const Text('Confirm Order'),
-                    style: _confirmStyle, // <-- same visual in both states
+                    style: _confirmStyle,
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -241,29 +232,22 @@ class CartSheet extends ConsumerWidget {
   }
 }
 
-class _CartLine {
-  final Sweet sweet;
-  final int qty;
-  _CartLine({required this.sweet, required this.qty});
-}
-
 class _CartRow extends ConsumerWidget {
-  final _CartLine line;
+  final CartLine line;
   const _CartRow({required this.line});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final cart = ref.watch(cartControllerProvider);
-    final qty = cart.qtyFor(line.sweet.id);
+    final cartCtl = ref.read(cartControllerProvider.notifier);
     final onSurface = Theme.of(context).colorScheme.onSurface;
 
-    // Image path/URL (null-safe + decode any % encodings)
     final img = _cleanSrc(line.sweet.imageAsset);
+    final note = line.note;
+    final qty = line.qty;
 
     return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Transparent PNG-friendly thumb (no background fill)
         SizedBox(
           width: 56,
           height: 56,
@@ -277,32 +261,116 @@ class _CartRow extends ConsumerWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // Name
               Text(
                 line.sweet.name,
-                style: const TextStyle(
-                    fontWeight: FontWeight.w700, fontSize: 14),
+                style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
               ),
               const SizedBox(height: 2),
-              // Price uses secondary/onSurface color
+              // Price
               Text(
                 line.sweet.price.toStringAsFixed(3),
                 style: TextStyle(color: onSurface),
               ),
+              const SizedBox(height: 6),
+              // Note chip (per-line)
+              _NoteChip(
+                hasNote: (note ?? '').trim().isNotEmpty,
+                preview: _preview(note),
+                onSurface: onSurface,
+                onTap: () => _openNoteEditor(context, cartCtl, line.id, note),
+              ),
             ],
           ),
         ),
+        const SizedBox(width: 8),
         _QtyChip(
           qty: qty,
-          onDec: () => ref
-              .read(cartControllerProvider.notifier)
-              .decrement(line.sweet.id),
-          onInc: () =>
-              ref.read(cartControllerProvider.notifier).add(line.sweet),
-          onRemove: () =>
-              ref.read(cartControllerProvider.notifier).remove(line.sweet.id),
+          onDec: () => cartCtl.decrementLine(line.id),
+          onInc: () => cartCtl.incrementLine(line.id),
+          onRemove: () => cartCtl.removeLine(line.id),
         ),
       ],
     );
+  }
+
+  static String _preview(String? note) {
+    final n = (note ?? '').trim();
+    if (n.isEmpty) return 'Add note';
+    return n.length <= 24 ? n : '${n.substring(0, 24)}…';
+  }
+
+  Future<void> _openNoteEditor(
+    BuildContext context,
+    CartController cartCtl,
+    String lineId,
+    String? current,
+  ) async {
+    final ctrl = TextEditingController(text: current ?? '');
+    final res = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) {
+        final onSurface = Theme.of(ctx).colorScheme.onSurface;
+        return Padding(
+          padding: EdgeInsets.only(
+            left: 16,
+            right: 16,
+            bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
+            top: 8,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Item note', style: Theme.of(ctx).textTheme.titleMedium),
+              const SizedBox(height: 8),
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  color: onSurface.withOpacity(0.04),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: onSurface.withOpacity(0.12)),
+                ),
+                child: TextField(
+                  controller: ctrl,
+                  autofocus: true,
+                  maxLines: 5,
+                  minLines: 3,
+                  maxLength: 200,
+                  decoration: const InputDecoration(
+                    hintText:
+                        'Write special instructions (e.g., less sugar, extra sauce)…',
+                    border: InputBorder.none,
+                    counterText: '',
+                    contentPadding: EdgeInsets.all(12),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () => Navigator.pop(ctx, ''), // clear
+                    icon: const Icon(Icons.delete_outline, size: 18),
+                    label: const Text('Clear'),
+                  ),
+                  const Spacer(),
+                  FilledButton.icon(
+                    onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+                    icon: const Icon(Icons.check, size: 18),
+                    label: const Text('Save'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (res == null) return;
+    cartCtl.setNote(lineId, res);
   }
 
   static String _cleanSrc(String? src) {
@@ -314,9 +382,7 @@ class _CartRow extends ConsumerWidget {
       } catch (_) {
         try {
           s = Uri.decodeComponent(s);
-        } catch (_) {
-          // stop if decoding fails
-        }
+        } catch (_) {}
       }
       if (s == before) break;
     }
@@ -331,13 +397,8 @@ class _CartRow extends ConsumerWidget {
         lower.startsWith('data:');
   }
 
-  /// Small 56x56 thumbnail that supports either assets or full URLs.
-  /// Uses BoxFit.contain to preserve PNG transparency.
   Widget _thumb(String src) {
-    if (src.isEmpty) {
-      return const SizedBox.shrink();
-    }
-
+    if (src.isEmpty) return const SizedBox.shrink();
     if (_looksLikeNetwork(src)) {
       return Image.network(
         src,
@@ -349,7 +410,6 @@ class _CartRow extends ConsumerWidget {
             progress == null ? child : const Center(child: CircularProgressIndicator(strokeWidth: 2)),
       );
     }
-
     return Image.asset(
       src,
       fit: BoxFit.contain,
@@ -379,7 +439,7 @@ class _QtyChip extends StatelessWidget {
 
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.10), // neutral dark overlay
+        color: Colors.black.withOpacity(0.10),
         borderRadius: BorderRadius.circular(24),
       ),
       child: Row(
@@ -409,6 +469,38 @@ class _QtyChip extends StatelessWidget {
         padding: const EdgeInsets.all(8.0),
         child: Icon(icon, size: 20, color: onSurface),
       ),
+    );
+  }
+}
+
+class _NoteChip extends StatelessWidget {
+  final bool hasNote;
+  final String preview;
+  final Color onSurface;
+  final VoidCallback onTap;
+  const _NoteChip({
+    required this.hasNote,
+    required this.preview,
+    required this.onSurface,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton.icon(
+      onPressed: onTap,
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size(40, 34),
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        visualDensity: const VisualDensity(horizontal: -2, vertical: -2),
+        side: BorderSide(color: onSurface.withOpacity(0.18)),
+        shape: const StadiumBorder(),
+        foregroundColor: onSurface.withOpacity(0.95),
+        backgroundColor:
+            hasNote ? onSurface.withOpacity(0.08) : Colors.transparent,
+      ),
+      icon: Icon(hasNote ? Icons.sticky_note_2 : Icons.note_add_outlined, size: 18),
+      label: Text(hasNote ? preview : 'Add note'),
     );
   }
 }

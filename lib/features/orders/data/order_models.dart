@@ -11,12 +11,14 @@ class OrderItem {
   final String name;
   final double price; // unit price
   final int qty;
+  final String? note; // NEW: per-item note
 
   const OrderItem({
     required this.productId,
     required this.name,
     required this.price,
     required this.qty,
+    this.note,
   });
 
   double get lineTotal => price * qty;
@@ -41,9 +43,7 @@ class Order {
     this.table,
   });
 
-  Order copyWith({
-    OrderStatus? status,
-  }) {
+  Order copyWith({OrderStatus? status}) {
     return Order(
       orderId: orderId,
       orderNo: orderNo,
@@ -55,3 +55,4 @@ class Order {
     );
   }
 }
+  

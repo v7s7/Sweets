@@ -34,8 +34,10 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
   late final PageController _pc =
       PageController(viewportFraction: 0.7, initialPage: _kInitialPage);
 
-  double _page = _kInitialPage.toDouble();
   int _qty = 1;
+
+  // Note (small pill opens a sheet)
+  final _noteCtrl = TextEditingController();
 
   final GlobalKey _activeImageKey = GlobalKey(); // used by fly-to-cart
   OverlayEntry? _flyEntry;
@@ -45,7 +47,6 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
   @override
   void initState() {
     super.initState();
-    _pc.addListener(_onPageTick);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final async = ref.read(sweetsStreamProvider);
@@ -80,18 +81,19 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
           _pc.jumpToPage(_kInitialPage);
         } catch (_) {}
       }
-      setState(() => _qty = 1);
+      setState(() {
+        _qty = 1;
+        _noteCtrl.clear();
+      });
     });
   }
 
-  void _onPageTick() => setState(() => _page = _pc.page ?? _page);
-
   @override
   void dispose() {
-    _pc.removeListener(_onPageTick);
     _pc.dispose();
     _flyEntry?.remove();
     _sweetsSub?.close();
+    _noteCtrl.dispose();
     super.dispose();
   }
 
@@ -146,11 +148,9 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                     textAlign: TextAlign.center,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: (typography.titleSmall ?? const TextStyle())
-                        .copyWith(
+                    style: (typography.titleSmall ?? const TextStyle()).copyWith(
                       fontFamily: secondaryFamily,
-                      fontSize:
-                          (typography.titleSmall?.fontSize ?? 14) + 1.5,
+                      fontSize: (typography.titleSmall?.fontSize ?? 14) + 1.5,
                       height: 1.28,
                       fontWeight: FontWeight.w600,
                       color: onSurface.withOpacity(0.78),
@@ -179,11 +179,11 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
         final size = MediaQuery.of(context).size;
         final surface = Theme.of(context).colorScheme.surface;
 
+        final bool isFlying = _flyEntry != null;
+
         return DefaultTextStyle.merge(
-          style: Theme.of(context)
-              .textTheme
-              .bodyMedium!
-              .copyWith(color: onSurface),
+          style:
+              Theme.of(context).textTheme.bodyMedium!.copyWith(color: onSurface),
           child: IconTheme(
             data: IconThemeData(color: onSurface),
             child: Column(
@@ -192,24 +192,23 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                   child: Stack(
                     clipBehavior: Clip.none,
                     children: [
-                      // 1) Carousel
-                      PageView.builder(
+                      // 1) Carousel isolated to reduce rebuilds
+                      _Carousel(
                         controller: _pc,
-                        padEnds: true,
-                        clipBehavior: Clip.none,
-                        pageSnapping: true,
-                        physics: state.isDetailOpen
-                            ? const NeverScrollableScrollPhysics()
-                            : const BouncingScrollPhysics(),
-                        onPageChanged: (i) {
+                        sweets: filtered,
+                        isDetailOpen: state.isDetailOpen,
+                        hostImageKey: _activeImageKey,
+                        onImageTap: () => ref
+                            .read(sweetsControllerProvider.notifier)
+                            .toggleDetail(),
+                        onIndexChanged: (i) {
                           ref
                               .read(sweetsControllerProvider.notifier)
                               .setIndex((i % filtered.length).toInt());
-                          setState(() => _qty = 1);
-                        },
-                        itemBuilder: (ctx, i) {
-                          final sweet = filtered[i % filtered.length];
-                          return _buildPageItem(context, sweet, i, state);
+                          setState(() {
+                            _qty = 1;
+                            _noteCtrl.clear(); // reset note per product
+                          });
                         },
                       ),
 
@@ -240,8 +239,7 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                                     8,
                               ),
                               child: AnimatedOpacity(
-                                duration:
-                                    const Duration(milliseconds: 180),
+                                duration: const Duration(milliseconds: 180),
                                 opacity: state.isDetailOpen ? 0 : 1,
                                 child: _LogoCard(
                                   url: url,
@@ -287,15 +285,14 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                         ),
                       ),
 
-                      // 5) Name + price/qty/add
+                      // 5) Name + price/qty/note-pill/add
                       Align(
                         alignment: const Alignment(0, 0.78),
                         child: IgnorePointer(
                           ignoring: state.isDetailOpen,
                           child: AnimatedOpacity(
                             opacity: state.isDetailOpen ? 0 : 1,
-                            duration:
-                                const Duration(milliseconds: 180),
+                            duration: const Duration(milliseconds: 180),
                             child: ConstrainedBox(
                               constraints:
                                   const BoxConstraints(maxWidth: 520),
@@ -308,8 +305,8 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                                     transitionBuilder: (c, a) =>
                                         FadeTransition(
                                       opacity: a,
-                                      child: ScaleTransition(
-                                          scale: a, child: c),
+                                      child:
+                                          ScaleTransition(scale: a, child: c),
                                     ),
                                     child: Text(
                                       current.name,
@@ -342,21 +339,32 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                                         onSurface: onSurface,
                                         qty: _qty,
                                         onDec: () => setState(() =>
-                                            _qty =
-                                                (_qty > 1) ? _qty - 1 : 1),
+                                            _qty = (_qty > 1) ? _qty - 1 : 1),
                                         onInc: () => setState(() =>
-                                            _qty =
-                                                (_qty < 99) ? _qty + 1 : 99),
+                                            _qty = (_qty < 99) ? _qty + 1 : 99),
                                       ),
-                                      const SizedBox(width: 10),
+
+                                      const SizedBox(width: 8),
                                       _AddIconButton(
                                         onSurface: onSurface,
-                                        onTap: () =>
-                                            _handleAddToCart(current,
-                                                qty: _qty),
+                                        enabled: !isFlying,
+                                        onTap: () => _handleAddToCart(
+                                          current,
+                                          qty: _qty,
+                                          note: _noteCtrl.text.trim(),
+                                        ),
                                       ),
                                     ],
-                                  ),
+                              ),
+const SizedBox(height: 16),
+Center(
+  child: _NotePill(
+    hasNote: _noteCtrl.text.trim().isNotEmpty,
+    onSurface: onSurface,
+    onTap: _openNoteSheet,
+  ),
+),
+
                                 ],
                               ),
                             ),
@@ -364,7 +372,7 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                         ),
                       ),
 
-                      // 6) Nutrition panel (right) – no text here now
+                      // 6) Nutrition panel (right)
                       Align(
                         alignment: Alignment.centerRight,
                         child: Padding(
@@ -380,14 +388,12 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                       ),
 
                       // 7) Center nutrition note (big, single)
-                      if (nutritionNote != null &&
-                          nutritionNote.isNotEmpty)
+                      if (nutritionNote != null && nutritionNote.isNotEmpty)
                         Align(
                           alignment:
                               const Alignment(0, 0.9), // between item & bottom
                           child: AnimatedOpacity(
-                            duration:
-                                const Duration(milliseconds: 160),
+                            duration: const Duration(milliseconds: 160),
                             opacity: state.isDetailOpen ? 1 : 0,
                             child: ConstrainedBox(
                               constraints:
@@ -403,8 +409,8 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                                         ?.copyWith(
                                           fontSize: 18,
                                           fontWeight: FontWeight.w700,
-                                          color: onSurface
-                                              .withOpacity(0.9),
+                                          color:
+                                              onSurface.withOpacity(0.9),
                                           fontFamily: secondaryFamily,
                                           height: 1.25,
                                         ) ??
@@ -450,42 +456,92 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
     return sweets;
   }
 
-  Widget _buildPageItem(
-    BuildContext context,
-    Sweet sweet,
-    int i,
-    SweetsState state,
-  ) {
-    final t = (_page - i).clamp(-1.0, 1.0);
-    final scale = 1 - (0.18 * t.abs());
-    final y = 18 * t.abs();
-    final rot = 0.02 * -t;
-
-    final int activeHost =
-        _pc.hasClients ? (_pc.page?.round() ?? _kInitialPage) : _kInitialPage;
-    final bool isHost = (i == activeHost);
-
-    return Transform.translate(
-      offset: Offset(0, y),
-      child: Transform.scale(
-        scale: scale,
-        child: Transform.rotate(
-          angle: rot,
-          child: SweetImage(
-            imageAsset: (sweet.imageAsset ?? ''),
-            isActive: (_page - i).abs() < 0.5,
-            isDetailOpen: state.isDetailOpen,
-            hostKey: isHost ? _activeImageKey : null,
-            onTap: () =>
-                ref.read(sweetsControllerProvider.notifier).toggleDetail(),
+  Future<void> _openNoteSheet() async {
+    final tmp = TextEditingController(text: _noteCtrl.text);
+    final res = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) {
+        final onSurface = Theme.of(ctx).colorScheme.onSurface;
+        return Padding(
+          padding: EdgeInsets.only(
+            left: 16,
+            right: 16,
+            bottom: MediaQuery.of(ctx).viewInsets.bottom + 16,
+            top: 8,
           ),
-        ),
-      ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Order note', style: Theme.of(ctx).textTheme.titleMedium),
+              const SizedBox(height: 8),
+              DecoratedBox(
+                decoration: BoxDecoration(
+                  color: onSurface.withOpacity(0.04),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: onSurface.withOpacity(0.12)),
+                ),
+                child: TextField(
+                  controller: tmp,
+                  autofocus: true,
+                  maxLines: 5,
+                  minLines: 3,
+                  maxLength: 200,
+                  decoration: const InputDecoration(
+                    hintText: 'Write special instructions (e.g., less sugar, extra sauce)…',
+                    border: InputBorder.none,
+                    counterText: '',
+                    contentPadding: EdgeInsets.all(12),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () => Navigator.pop(ctx, ''),
+                    icon: const Icon(Icons.delete_outline, size: 18),
+                    label: const Text('Clear'),
+                  ),
+                  const Spacer(),
+                  FilledButton.icon(
+                    onPressed: () => Navigator.pop(ctx, tmp.text.trim()),
+                    icon: const Icon(Icons.check, size: 18),
+                    label: const Text('Save'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
     );
+
+    if (!mounted) return;
+    setState(() {
+      if (res == null) return; // dismissed
+      _noteCtrl.text = res;
+    });
   }
 
-  Future<void> _handleAddToCart(Sweet sweet, {int qty = 1}) async {
-    ref.read(cartControllerProvider.notifier).add(sweet, qty: qty);
+  Future<void> _handleAddToCart(
+    Sweet sweet, {
+    required int qty,
+    required String note,
+  }) async {
+    // Try addWithNote; fallback to add
+    final cart = ref.read(cartControllerProvider.notifier);
+    try {
+      // ignore: avoid_dynamic_calls
+      await (cart as dynamic).addWithNote(sweet, qty: qty, note: note.isEmpty ? null : note);
+    } catch (_) {
+      cart.add(sweet, qty: qty);
+    }
+
+    // Clear note after adding to cart (as requested)
+    if (mounted) setState(() => _noteCtrl.clear());
 
     final overlay = Overlay.maybeOf(context);
     await Haptics.light();
@@ -531,9 +587,9 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
                       shape: BoxShape.circle,
                       color: onSurface.withOpacity(0.12),
                     ),
-                    child: FittedBox(
+                    child: const FittedBox(
                       fit: BoxFit.cover,
-                      child: _thumbFor(sweet),
+                      child: Icon(Icons.shopping_bag_outlined),
                     ),
                   ),
                 ),
@@ -559,26 +615,12 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
           _flyEntry = null;
         }
         controller.dispose();
+        setState(() {}); // refresh Add button enabled state
       }
     });
 
+    setState(() {}); // disable Add while flying
     controller.forward();
-  }
-
-  Widget _thumbFor(Sweet s) {
-    if (s.imageUrl != null && s.imageUrl!.isNotEmpty) {
-      return Image.network(
-        s.imageUrl!,
-        errorBuilder: (_, __, ___) => const Icon(Icons.circle, size: 12),
-      );
-    }
-    if (s.imageAsset != null && s.imageAsset!.isNotEmpty) {
-      return Image.asset(
-        s.imageAsset!,
-        errorBuilder: (_, __, ___) => const Icon(Icons.circle, size: 12),
-      );
-    }
-    return const Icon(Icons.circle, size: 12);
   }
 
   double _arc(double t) => math.sin(t * math.pi);
@@ -593,7 +635,149 @@ class _SweetsViewportState extends ConsumerState<SweetsViewport>
   }
 }
 
+/* ---------- Isolated carousel (reduces rebuilds while scrolling) ---------- */
+
+class _Carousel extends StatefulWidget {
+  final PageController controller;
+  final List<Sweet> sweets;
+  final bool isDetailOpen;
+  final VoidCallback onImageTap;
+  final ValueChanged<int> onIndexChanged;
+  final GlobalKey hostImageKey;
+
+  const _Carousel({
+    required this.controller,
+    required this.sweets,
+    required this.isDetailOpen,
+    required this.onImageTap,
+    required this.onIndexChanged,
+    required this.hostImageKey,
+  });
+
+  @override
+  State<_Carousel> createState() => _CarouselState();
+}
+
+class _CarouselState extends State<_Carousel> {
+  static const int _kInitialPage = _SweetsViewportState._kInitialPage;
+  double _page = _kInitialPage.toDouble();
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_onTick);
+  }
+
+  @override
+  void didUpdateWidget(covariant _Carousel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_onTick);
+      widget.controller.addListener(_onTick);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onTick);
+    super.dispose();
+  }
+
+  void _onTick() {
+    final p = widget.controller.page;
+    if (p != null && p != _page) {
+      setState(() => _page = p);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PageView.builder(
+      controller: widget.controller,
+      padEnds: true,
+      clipBehavior: Clip.none,
+      pageSnapping: true,
+      physics: widget.isDetailOpen
+          ? const NeverScrollableScrollPhysics()
+          : const BouncingScrollPhysics(),
+      onPageChanged: widget.onIndexChanged,
+      itemBuilder: (ctx, i) {
+        final sweet = widget.sweets[i % widget.sweets.length];
+        return _buildPageItem(context, sweet, i);
+      },
+    );
+  }
+
+  Widget _buildPageItem(
+    BuildContext context,
+    Sweet sweet,
+    int i,
+  ) {
+    final t = (_page - i).clamp(-1.0, 1.0);
+    final scale = 1 - (0.18 * t.abs());
+    final y = 18 * t.abs();
+    final rot = 0.02 * -t;
+
+    final int activeHost = widget.controller.hasClients
+        ? (widget.controller.page?.round() ?? _kInitialPage)
+        : _kInitialPage;
+    final bool isHost = (i == activeHost);
+
+    return Transform.translate(
+      offset: Offset(0, y),
+      child: Transform.scale(
+        scale: scale,
+        child: Transform.rotate(
+          angle: rot,
+          child: SweetImage(
+            imageAsset: (sweet.imageAsset ?? ''),
+            isActive: (_page - i).abs() < 0.5,
+            isDetailOpen: widget.isDetailOpen,
+            hostKey: isHost ? widget.hostImageKey : null,
+            onTap: widget.onImageTap,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /* ---------- UI pieces ---------- */
+
+class _NotePill extends StatelessWidget {
+  final bool hasNote;
+  final VoidCallback onTap;
+  final Color onSurface;
+  const _NotePill({
+    required this.hasNote,
+    required this.onTap,
+    required this.onSurface,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = hasNote ? onSurface.withOpacity(0.10) : Colors.transparent;
+    final side = onSurface.withOpacity(hasNote ? 0.25 : 0.18);
+    final fg = onSurface.withOpacity(0.95);
+    return OutlinedButton.icon(
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size(40, 36),
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        visualDensity: const VisualDensity(horizontal: -2, vertical: -2),
+        side: BorderSide(color: side),
+        backgroundColor: bg,
+        shape: const StadiumBorder(),
+        foregroundColor: fg,
+      ),
+      onPressed: onTap,
+      icon: Icon(
+        hasNote ? Icons.sticky_note_2 : Icons.note_add_outlined,
+        size: 18,
+      ),
+      label: Text(hasNote ? 'Note added' : 'Add note'),
+    );
+  }
+}
 
 class _QtyStepper extends StatelessWidget {
   final int qty;
@@ -610,18 +794,20 @@ class _QtyStepper extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final bg = onSurface.withOpacity(0.10);
+    final border = onSurface.withOpacity(0.12);
     return Material(
       color: Colors.transparent,
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.30),
+          color: bg,
           borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: Colors.black.withOpacity(0.15)),
+          border: Border.all(color: border),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _step(icon: Icons.remove_rounded, onTap: onDec, onSurface: onSurface),
+            _step(icon: Icons.remove_rounded, onTap: onDec, onSurface: onSurface, semantics: 'Decrease quantity'),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               child: Text(
@@ -632,23 +818,29 @@ class _QtyStepper extends StatelessWidget {
                     color: onSurface),
               ),
             ),
-            _step(icon: Icons.add_rounded, onTap: onInc, onSurface: onSurface),
+            _step(icon: Icons.add_rounded, onTap: onInc, onSurface: onSurface, semantics: 'Increase quantity'),
           ],
         ),
       ),
     );
   }
 
-  Widget _step(
-      {required IconData icon,
-      required VoidCallback onTap,
-      required Color onSurface}) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(24),
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.all(8.0),
-        child: Icon(icon, size: 22, color: onSurface),
+  Widget _step({
+    required IconData icon,
+    required VoidCallback onTap,
+    required Color onSurface,
+    required String semantics,
+  }) {
+    return Semantics(
+      button: true,
+      label: semantics,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(24),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Icon(icon, size: 22, color: onSurface),
+        ),
       ),
     );
   }
@@ -657,7 +849,12 @@ class _QtyStepper extends StatelessWidget {
 class _AddIconButton extends StatelessWidget {
   final VoidCallback onTap;
   final Color onSurface;
-  const _AddIconButton({required this.onTap, required this.onSurface});
+  final bool enabled;
+  const _AddIconButton({
+    required this.onTap,
+    required this.onSurface,
+    this.enabled = true,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -672,7 +869,7 @@ class _AddIconButton extends StatelessWidget {
           padding: EdgeInsets.zero,
           foregroundColor: onSurface,
         ),
-        onPressed: onTap,
+        onPressed: enabled ? onTap : null,
         child: const Icon(Icons.shopping_bag_outlined, size: 22),
       ),
     );

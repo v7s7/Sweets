@@ -69,35 +69,34 @@ class OrderService {
           .collection('orders')
           .doc();
 
-      await doc.set({
-        'merchantId': _m,
-        'branchId': _b,
-        'userId': uid,
-        'status': 'pending',
-        'items': items
-            .map((e) => {
-                  'productId': e.productId,
-                  'name': e.name,
-                  'price': e.price,
-                  'qty': e.qty,
-                })
-            .toList(),
-        'subtotal': subtotal,
-        'currency': 'BHD',
-        'table': table,
-        'createdAt': FieldValue.serverTimestamp(),
-        // 'orderNo' optional on free plan
-      });
+  await doc.set({
+      'merchantId': _m,
+      'branchId': _b,
+      'userId': uid,
+      'status': 'pending',
+      'items': items.map((e) => {
+            'productId': e.productId,
+            'name': e.name,
+            'price': e.price,
+            'qty': e.qty,
+            if ((e.note ?? '').trim().isNotEmpty) 'note': e.note!.trim(), // NEW
+          }).toList(),
+      'subtotal': subtotal,
+      'currency': 'BHD',
+      'table': table,
+      'createdAt': FieldValue.serverTimestamp(),
+      // 'orderNo' optional
+    });
 
-      return om.Order(
-        orderId: doc.id,
-        orderNo: '—',
-        status: om.OrderStatus.pending,
-        createdAt: DateTime.now(), // precise time comes from watchOrder()
-        items: items,
-        subtotal: subtotal,
-        table: table,
-      );
+    return om.Order(
+      orderId: doc.id,
+      orderNo: '—',
+      status: om.OrderStatus.pending,
+      createdAt: DateTime.now(),
+      items: items,
+      subtotal: subtotal,
+      table: table,
+    );
     } catch (e, st) {
       if (kDebugMode) {
         debugPrint('createOrder(): Unexpected error: $e\n$st');
@@ -175,6 +174,7 @@ class OrderService {
       name: _asString(m['name']),
       price: _asNum(m['price']).toDouble(),
       qty: _asNum(m['qty']).toInt(),
+      note: _asNullableString(m['note']), // NEW
     );
   }
 

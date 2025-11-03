@@ -107,15 +107,30 @@ class OrderStatusPage extends ConsumerWidget {
                     itemCount: order.items.length,
                     separatorBuilder: (_, __) => const Divider(height: 1),
                     itemBuilder: (context, i) {
-                      final it = order.items[i];
-                      return ListTile(
-                        title: Text(
-                          it.name,
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                        subtitle: Text(it.price.toStringAsFixed(3)),
-                        trailing: Text('x${it.qty}'),
-                      );
+// inside itemBuilder of ListView.separated:
+final it = order.items[i];
+return ListTile(
+  title: Text(it.name, style: const TextStyle(fontWeight: FontWeight.w700)),
+  subtitle: Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Text(it.price.toStringAsFixed(3)),
+      if ((it.note ?? '').trim().isNotEmpty) ...[
+        const SizedBox(height: 2),
+        Text(
+          '📝 ${it.note!.trim()}',
+          style: TextStyle(
+            fontStyle: FontStyle.italic,
+            color: Theme.of(context).colorScheme.onSurface.withOpacity(0.85),
+          ),
+        ),
+      ],
+    ],
+  ),
+  trailing: Text('x${it.qty}'),
+);
+
                     },
                   ),
                 ),
