@@ -55,6 +55,57 @@ class EmailService {
     }
   }
 
+  /// Send customer order confirmation email
+  static Future<EmailResult> sendCustomerConfirmation({
+    required String orderNo,
+    String? table,
+    required List<OrderItem> items,
+    required double subtotal,
+    required String timestamp,
+    required String merchantName,
+    String? estimatedTime,
+    required String toEmail,
+  }) async {
+    if (!EmailConfig.isConfigured) {
+      return EmailResult.error(
+          'Email service not configured. Please set the Cloudflare Worker URL in email_config.dart');
+    }
+
+    try {
+      final response = await http.post(
+        Uri.parse(EmailConfig.orderNotificationEndpoint),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'action': 'customer-confirmation',
+          'data': {
+            'orderNo': orderNo,
+            'table': table,
+            'items': items.map((item) => item.toJson()).toList(),
+            'subtotal': subtotal,
+            'timestamp': timestamp,
+            'merchantName': merchantName,
+            'estimatedTime': estimatedTime,
+            'toEmail': toEmail,
+          },
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data['success'] == true) {
+          return EmailResult.success(data['messageId']);
+        } else {
+          return EmailResult.error(data['error'] ?? 'Unknown error');
+        }
+      } else {
+        return EmailResult.error(
+            'HTTP ${response.statusCode}: ${response.body}');
+      }
+    } catch (e) {
+      return EmailResult.error('Network error: $e');
+    }
+  }
+
   /// Send sales report email
   static Future<EmailResult> sendReport({
     required String merchantName,
