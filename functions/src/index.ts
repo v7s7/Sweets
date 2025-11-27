@@ -99,7 +99,7 @@ function normalizeSlug(s: string): string {
   return norm;
 }
 
-export const setBranchSlug = functions.https.onCall(async (data, context) => {
+export const setBranchSlug = functions.https.onCall(async (data: any, context: functions.https.CallableContext) => {
   try {
     if (!context.auth) {
       throw new functions.https.HttpsError("unauthenticated", "Sign in required.");
@@ -154,7 +154,7 @@ export const setBranchSlug = functions.https.onCall(async (data, context) => {
 /*                                createOrder                                 */
 /* -------------------------------------------------------------------------- */
 
-export const createOrder = functions.https.onCall(async (data, context) => {
+export const createOrder = functions.https.onCall(async (data: any, context: functions.https.CallableContext) => {
   const t0 = Date.now();
   try {
     if (!context.auth) {
@@ -237,7 +237,7 @@ export const createOrder = functions.https.onCall(async (data, context) => {
 /*                             updateOrderStatus                               */
 /* -------------------------------------------------------------------------- */
 
-export const updateOrderStatus = functions.https.onCall(async (data, context) => {
+export const updateOrderStatus = functions.https.onCall(async (data: any, context: functions.https.CallableContext) => {
   try {
     if (!context.auth) {
       throw new functions.https.HttpsError("unauthenticated", "Sign in required.");
@@ -287,7 +287,7 @@ export const updateOrderStatus = functions.https.onCall(async (data, context) =>
 
 export const onOrderCreated = functions.firestore
   .document("merchants/{merchantId}/branches/{branchId}/orders/{orderId}")
-  .onCreate(async (snap, context) => {
+  .onCreate(async (snap: functions.firestore.DocumentSnapshot, context: functions.EventContext) => {
     try {
       const { merchantId, branchId, orderId } = context.params;
       const orderData = snap.data();
@@ -356,7 +356,7 @@ type GenerateReportPayload = {
   toEmail: string;
 };
 
-export const generateReport = functions.https.onCall(async (data, context) => {
+export const generateReport = functions.https.onCall(async (data: any, context: functions.https.CallableContext) => {
   try {
     if (!context.auth) {
       throw new functions.https.HttpsError("unauthenticated", "Sign in required.");
