@@ -7,17 +7,21 @@ import 'package:flutter_web_plugins/url_strategy.dart';
 // Firebase
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../firebase_options.dart';
 
 // Config / IDs
 import '../core/config/app_config.dart';
 import '../core/config/slug_routing.dart';
 import '../core/branding/branding_providers.dart';
+import '../core/services/order_notification_service.dart';
 
 // Screens
 import 'screens/login_screen.dart';
 import 'screens/products_screen.dart';
 import 'screens/orders_admin_page.dart';
+import 'screens/reports_page.dart';
+import 'screens/settings_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -108,26 +112,93 @@ class _MerchantAppState extends ConsumerState<MerchantApp> {
   }
 }
 
-class _MerchantShell extends StatefulWidget {
+class _MerchantShell extends ConsumerStatefulWidget {
   final String merchantId;
   final String branchId;
   const _MerchantShell({required this.merchantId, required this.branchId});
 
   @override
-  State<_MerchantShell> createState() => _MerchantShellState();
+  ConsumerState<_MerchantShell> createState() => _MerchantShellState();
 }
 
-class _MerchantShellState extends State<_MerchantShell> {
+class _MerchantShellState extends ConsumerState<_MerchantShell> {
   int _i = 0;
+  final _notificationService = OrderNotificationService();
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeNotifications();
+  }
+
+  @override
+  void dispose() {
+    _notificationService.stopListening();
+    super.dispose();
+  }
+
+  Future<void> _initializeNotifications() async {
+    try {
+      // Load settings from Firestore
+      final settingsDoc = await FirebaseFirestore.instance
+          .doc('merchants/${widget.merchantId}/branches/${widget.branchId}/config/settings')
+          .get();
+
+      final enabled = settingsDoc.data()?['emailNotifications']?['enabled'] as bool? ?? false;
+      final email = settingsDoc.data()?['emailNotifications']?['email'] as String?;
+
+      if (!enabled || email == null || email.isEmpty) {
+        return;
+      }
+
+      // Load merchant name
+      final brandingDoc = await FirebaseFirestore.instance
+          .doc('merchants/${widget.merchantId}/branches/${widget.branchId}/config/branding')
+          .get();
+      final merchantName = brandingDoc.data()?['title'] as String? ?? 'Your Store';
+
+      // Start listening
+      _notificationService.startListening(
+        merchantId: widget.merchantId,
+        branchId: widget.branchId,
+        merchantEmail: email,
+        merchantName: merchantName,
+        enabled: enabled,
+      );
+
+      print('[MerchantShell] Email notifications started for $email');
+    } catch (e) {
+      print('[MerchantShell] Failed to initialize notifications: $e');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final pages = <Widget>[
       ProductsScreen(merchantId: widget.merchantId, branchId: widget.branchId),
       const OrdersAdminPage(),
+      const ReportsPage(),
     ];
 
     return Scaffold(
+      appBar: _i == 2
+          ? null
+          : AppBar(
+              title: Text(_i == 0 ? 'Products' : 'Orders'),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.settings_outlined),
+                  tooltip: 'Settings',
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const SettingsPage(),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
       body: pages[_i],
       bottomNavigationBar: NavigationBar(
         selectedIndex: _i,
@@ -142,6 +213,11 @@ class _MerchantShellState extends State<_MerchantShell> {
             icon: Icon(Icons.receipt_long_outlined),
             selectedIcon: Icon(Icons.receipt_long),
             label: 'Orders',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.analytics_outlined),
+            selectedIcon: Icon(Icons.analytics),
+            label: 'Reports',
           ),
         ],
       ),

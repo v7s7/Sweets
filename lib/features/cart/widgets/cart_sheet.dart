@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:intl/intl.dart';
 
 import '../../sweets/data/sweets_repo.dart'; // sweetsStreamProvider
 import '../../sweets/data/sweet.dart';
@@ -10,13 +12,27 @@ import '../../orders/data/order_service.dart';
 import '../../orders/screens/order_status_page.dart';
 
 import '../../../core/config/app_config.dart';
+import '../../../core/services/email_service.dart' as email;
 
-class CartSheet extends ConsumerWidget {
+class CartSheet extends ConsumerStatefulWidget {
   final VoidCallback? onConfirm;
   const CartSheet({super.key, this.onConfirm});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<CartSheet> createState() => _CartSheetState();
+}
+
+class _CartSheetState extends ConsumerState<CartSheet> {
+  final _emailController = TextEditingController();
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final cart = ref.watch(cartControllerProvider);
     final sweetsAsync = ref.watch(sweetsStreamProvider);
 
@@ -177,7 +193,24 @@ class CartSheet extends ConsumerWidget {
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
+
+                // Email field for order confirmation
+                TextField(
+                  controller: _emailController,
+                  decoration: InputDecoration(
+                    labelText: 'Email (optional)',
+                    hintText: 'Get order confirmation via email',
+                    prefixIcon: const Icon(Icons.email_outlined),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    filled: true,
+                  ),
+                  keyboardType: TextInputType.emailAddress,
+                  textInputAction: TextInputAction.done,
+                ),
+                const SizedBox(height: 16),
 
                 SizedBox(
                   width: double.infinity,
@@ -205,6 +238,45 @@ class CartSheet extends ConsumerWidget {
                               table: table,
                             );
 
+                            // Send confirmation email if email is provided
+                            final emailAddress = _emailController.text.trim();
+                            if (emailAddress.isNotEmpty && emailAddress.contains('@')) {
+                              try {
+                                // Get merchant name
+                                final cfg = ref.read(appConfigProvider);
+                                final brandingDoc = await FirebaseFirestore.instance
+                                    .doc('merchants/${cfg.merchantId}/branches/${cfg.branchId}/config/branding')
+                                    .get();
+                                final merchantName = brandingDoc.data()?['title'] as String? ?? 'Restaurant';
+
+                                // Get order number from Firestore (will be set by backend)
+                                final orderDoc = await FirebaseFirestore.instance
+                                    .doc('merchants/${cfg.merchantId}/branches/${cfg.branchId}/orders/${order.orderId}')
+                                    .get();
+                                final orderNo = orderDoc.data()?['orderNo'] as String? ?? order.orderId.substring(0, 8);
+
+                                // Send confirmation email
+                                await email.EmailService.sendCustomerConfirmation(
+                                  orderNo: orderNo,
+                                  table: table,
+                                  items: items.map((item) => email.OrderItem(
+                                    name: item.name,
+                                    qty: item.qty,
+                                    price: item.price,
+                                    note: item.note,
+                                  )).toList(),
+                                  subtotal: subtotal,
+                                  timestamp: DateFormat('MM/dd/yyyy hh:mm a').format(DateTime.now()),
+                                  merchantName: merchantName,
+                                  estimatedTime: '15-20 minutes',
+                                  toEmail: emailAddress,
+                                );
+                              } catch (e) {
+                                // Silently fail - order was created successfully
+                                debugPrint('[CartSheet] Failed to send confirmation email: $e');
+                              }
+                            }
+
                             // ignore: use_build_context_synchronously
                             Navigator.of(context).maybePop();
                             // ignore: use_build_context_synchronously
@@ -215,7 +287,7 @@ class CartSheet extends ConsumerWidget {
                               ),
                             );
 
-                            onConfirm?.call();
+                            widget.onConfirm?.call();
                           },
                     icon: const Icon(Icons.check_circle_outline),
                     label: const Text('Confirm Order'),
