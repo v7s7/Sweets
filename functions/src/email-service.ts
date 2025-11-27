@@ -21,6 +21,8 @@ const resend = new Resend(RESEND_API_KEY);
 
 /**
  * Order notification email HTML template
+ * @param {object} data - The order data
+ * @return {string} HTML email template
  */
 function orderNotificationTemplate(data: {
   orderNo: string;
@@ -43,7 +45,7 @@ function orderNotificationTemplate(data: {
         ${item.price.toFixed(3)} BHD
       </td>
     </tr>
-  `
+  `,
     )
     .join("");
 
@@ -125,6 +127,8 @@ function orderNotificationTemplate(data: {
 
 /**
  * Report email HTML template
+ * @param {object} data - The report data
+ * @return {string} HTML email template
  */
 function reportTemplate(data: {
   merchantName: string;
@@ -147,7 +151,7 @@ function reportTemplate(data: {
       <td style="padding: 8px; border-bottom: 1px solid #eee; text-align: center;">${item.count}</td>
       <td style="padding: 8px; border-bottom: 1px solid #eee; text-align: right;">${item.revenue.toFixed(3)} BHD</td>
     </tr>
-  `
+  `,
     )
     .join("");
 
@@ -163,7 +167,7 @@ function reportTemplate(data: {
         <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); height: 100%; width: ${(s.count / data.totalOrders) * 100}%;"></div>
       </div>
     </div>
-  `
+  `,
     )
     .join("");
 
@@ -267,6 +271,8 @@ export interface ReportData {
 
 /**
  * Send order notification email to merchant
+ * @param {OrderNotificationData} data - The order notification data
+ * @return {Promise} Promise with success status and message ID or error
  */
 export async function sendOrderNotification(data: OrderNotificationData): Promise<{ success: boolean; messageId?: string; error?: string }> {
   try {
@@ -297,6 +303,8 @@ export async function sendOrderNotification(data: OrderNotificationData): Promis
 
 /**
  * Send report email to merchant
+ * @param {ReportData} data - The report data
+ * @return {Promise} Promise with success status and message ID or error
  */
 export async function sendReport(data: ReportData): Promise<{ success: boolean; messageId?: string; error?: string }> {
   try {

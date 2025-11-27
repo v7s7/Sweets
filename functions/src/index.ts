@@ -174,7 +174,7 @@ export const setBranchSlug = onCall(
       if (err instanceof HttpsError) throw err;
       throw new HttpsError("internal", "Unexpected error in setBranchSlug.");
     }
-  }
+  },
 );
 
 /* -------------------------------------------------------------------------- */
@@ -428,9 +428,9 @@ export const onOrderCreated = onDocumentCreated(
         note?: string;
       }>;
 
-      const timestamp = orderData.createdAt
-        ? new Date(orderData.createdAt.toDate()).toLocaleString()
-        : new Date().toLocaleString();
+      const timestamp = orderData.createdAt ?
+        new Date(orderData.createdAt.toDate()).toLocaleString() :
+        new Date().toLocaleString();
 
       const emailData: OrderNotificationData = {
         orderNo: orderData.orderNo || orderId,
@@ -439,7 +439,7 @@ export const onOrderCreated = onDocumentCreated(
         subtotal: orderData.subtotal || 0,
         timestamp,
         merchantName,
-        dashboardUrl: `https://sweetweb.web.app/merchant`, // Update with actual URL
+        dashboardUrl: "https://sweetweb.web.app/merchant", // Update with actual URL
         toEmail: merchantEmail,
       };
 
@@ -463,7 +463,7 @@ export const onOrderCreated = onDocumentCreated(
         stack: error.stack,
       });
     }
-  }
+  },
 );
 
 type GenerateReportPayload = {
@@ -624,5 +624,5 @@ export const generateReport = onCall(
       if (err instanceof HttpsError) throw err;
       throw new HttpsError("internal", "Unexpected error in generateReport.");
     }
-  }
+  },
 );
