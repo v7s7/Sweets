@@ -32,6 +32,7 @@ module.exports = {
     "max-len": "off",
     "require-jsdoc": "off",
     "object-curly-spacing": "off",
+    "linebreak-style": "off", // Allow CRLF on Windows
     "@typescript-eslint/no-explicit-any": "off",
     "@typescript-eslint/no-non-null-assertion": "off",
   },
