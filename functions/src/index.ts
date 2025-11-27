@@ -7,8 +7,12 @@ import {
   HttpsError,
   CallableRequest,
 } from "firebase-functions/v2/https";
+import { onDocumentCreated } from "firebase-functions/v2/firestore";
 import { setGlobalOptions } from "firebase-functions/v2/options";
 import * as logger from "firebase-functions/logger";
+
+// Email service
+import { sendOrderNotification, sendReport, type OrderNotificationData, type ReportData } from "./email-service";
 
 /**
  * Default region (Gulf): me-central2
@@ -368,4 +372,257 @@ export const updateOrderStatus = onCall(
       throw new HttpsError("internal", "Unexpected error in updateOrderStatus.");
     }
   },
+);
+
+/* -------------------------------------------------------------------------- */
+/*                         Email Notifications & Reports                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Firestore trigger: Send email notification when a new order is created
+ */
+export const onOrderCreated = onDocumentCreated(
+  {
+    document: "merchants/{merchantId}/branches/{branchId}/orders/{orderId}",
+    region: REGION,
+  },
+  async (event) => {
+    try {
+      const { merchantId, branchId, orderId } = event.params;
+      const orderData = event.data?.data();
+
+      if (!orderData) {
+        logger.warn("[onOrderCreated] No order data", { merchantId, branchId, orderId });
+        return;
+      }
+
+      // Get merchant email settings
+      const settingsDoc = await db
+        .doc(`merchants/${merchantId}/branches/${branchId}/config/settings`)
+        .get();
+
+      const notificationsEnabled = settingsDoc.get("emailNotifications.enabled") ?? false;
+      const merchantEmail = settingsDoc.get("emailNotifications.email");
+
+      if (!notificationsEnabled || !merchantEmail) {
+        logger.info("[onOrderCreated] Email notifications disabled or no email configured", {
+          merchantId,
+          branchId,
+          enabled: notificationsEnabled,
+          hasEmail: !!merchantEmail,
+        });
+        return;
+      }
+
+      // Get merchant name from branding
+      const brandingDoc = await db
+        .doc(`merchants/${merchantId}/branches/${branchId}/config/branding`)
+        .get();
+      const merchantName = brandingDoc.get("title") || "Your Store";
+
+      // Prepare email data
+      const items = (orderData.items || []) as Array<{
+        name: string;
+        qty: number;
+        price: number;
+        note?: string;
+      }>;
+
+      const timestamp = orderData.createdAt
+        ? new Date(orderData.createdAt.toDate()).toLocaleString()
+        : new Date().toLocaleString();
+
+      const emailData: OrderNotificationData = {
+        orderNo: orderData.orderNo || orderId,
+        table: orderData.table || null,
+        items,
+        subtotal: orderData.subtotal || 0,
+        timestamp,
+        merchantName,
+        dashboardUrl: `https://sweetweb.web.app/merchant`, // Update with actual URL
+        toEmail: merchantEmail,
+      };
+
+      // Send email
+      const result = await sendOrderNotification(emailData);
+
+      if (result.success) {
+        logger.info("[onOrderCreated] Email sent successfully", {
+          messageId: result.messageId,
+          orderNo: orderData.orderNo,
+        });
+      } else {
+        logger.error("[onOrderCreated] Email failed", {
+          error: result.error,
+          orderNo: orderData.orderNo,
+        });
+      }
+    } catch (error: any) {
+      logger.error("[onOrderCreated] Exception", {
+        error: error.message || String(error),
+        stack: error.stack,
+      });
+    }
+  }
+);
+
+type GenerateReportPayload = {
+  merchantId: string;
+  branchId: string;
+  startDate: string; // ISO date string
+  endDate: string; // ISO date string
+  toEmail: string;
+};
+
+/**
+ * Callable function: Generate and email a sales report for a custom date range
+ */
+export const generateReport = onCall(
+  {
+    cors: CORS_ORIGINS,
+  },
+  async (request: CallableRequest<GenerateReportPayload>) => {
+    try {
+      if (!request.auth) {
+        throw new HttpsError("unauthenticated", "Sign in required.");
+      }
+
+      const { merchantId, branchId, startDate, endDate, toEmail } =
+        (request.data || {}) as GenerateReportPayload;
+
+      if (!merchantId || !branchId || !startDate || !endDate || !toEmail) {
+        throw new HttpsError("invalid-argument", "Missing required fields.");
+      }
+
+      // Verify user is staff
+      const uid = request.auth.uid!;
+      if (!(await isStaff(uid, merchantId, branchId))) {
+        throw new HttpsError("permission-denied", "Staff only.");
+      }
+
+      // Parse dates
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999); // Include full end day
+
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+        throw new HttpsError("invalid-argument", "Invalid date format.");
+      }
+
+      logger.info("[generateReport] Generating report", {
+        merchantId,
+        branchId,
+        startDate,
+        endDate,
+        toEmail,
+      });
+
+      // Fetch orders in date range
+      const ordersSnap = await db
+        .collection(`merchants/${merchantId}/branches/${branchId}/orders`)
+        .where("createdAt", ">=", start)
+        .where("createdAt", "<=", end)
+        .get();
+
+      // Calculate metrics
+      let totalRevenue = 0;
+      let servedOrders = 0;
+      let cancelledOrders = 0;
+      const ordersByStatus: Record<string, number> = {};
+      const itemCounts: Record<string, { count: number; revenue: number }> = {};
+
+      ordersSnap.forEach((doc) => {
+        const order = doc.data();
+        const status = order.status as OrderStatus;
+
+        // Count by status
+        ordersByStatus[status] = (ordersByStatus[status] || 0) + 1;
+
+        if (status === "served") {
+          servedOrders++;
+          totalRevenue += order.subtotal || 0;
+        } else if (status === "cancelled") {
+          cancelledOrders++;
+        }
+
+        // Count items (only from served orders)
+        if (status === "served" && order.items) {
+          for (const item of order.items) {
+            const key = item.name;
+            if (!itemCounts[key]) {
+              itemCounts[key] = { count: 0, revenue: 0 };
+            }
+            itemCounts[key].count += item.qty;
+            itemCounts[key].revenue += item.price * item.qty;
+          }
+        }
+      });
+
+      // Top items
+      const topItems = Object.entries(itemCounts)
+        .map(([name, data]) => ({ name, count: data.count, revenue: data.revenue }))
+        .sort((a, b) => b.count - a.count);
+
+      // Orders by status array
+      const statusArray = Object.entries(ordersByStatus).map(([status, count]) => ({
+        status,
+        count,
+      }));
+
+      // Get merchant name
+      const brandingDoc = await db
+        .doc(`merchants/${merchantId}/branches/${branchId}/config/branding`)
+        .get();
+      const merchantName = brandingDoc.get("title") || "Your Store";
+
+      // Format date range
+      const dateRange = `${start.toLocaleDateString()} - ${end.toLocaleDateString()}`;
+
+      // Prepare report data
+      const reportData: ReportData = {
+        merchantName,
+        dateRange,
+        totalOrders: ordersSnap.size,
+        totalRevenue,
+        servedOrders,
+        cancelledOrders,
+        averageOrder: servedOrders > 0 ? totalRevenue / servedOrders : 0,
+        topItems,
+        ordersByStatus: statusArray,
+        toEmail,
+      };
+
+      // Send report email
+      const result = await sendReport(reportData);
+
+      if (!result.success) {
+        throw new HttpsError("internal", `Failed to send report: ${result.error}`);
+      }
+
+      logger.info("[generateReport] Report sent successfully", {
+        messageId: result.messageId,
+        totalOrders: ordersSnap.size,
+        totalRevenue,
+      });
+
+      return {
+        success: true,
+        messageId: result.messageId,
+        stats: {
+          totalOrders: ordersSnap.size,
+          totalRevenue,
+          servedOrders,
+          cancelledOrders,
+        },
+      };
+    } catch (err: any) {
+      logger.error("[generateReport] error", {
+        code: err?.code ?? "unknown",
+        message: err?.message ?? String(err),
+        stack: err?.stack ?? null,
+      });
+      if (err instanceof HttpsError) throw err;
+      throw new HttpsError("internal", "Unexpected error in generateReport.");
+    }
+  }
 );

@@ -1,0 +1,326 @@
+import { Resend } from "resend";
+import * as logger from "firebase-functions/logger";
+
+/**
+ * Email service using Resend API
+ *
+ * NOTE: In production, move API key to Firebase environment config:
+ * firebase functions:config:set resend.api_key="re_..."
+ * Then use: functions.config().resend.api_key
+ *
+ * For Firebase Spark (free) plan, we store it here temporarily.
+ */
+const RESEND_API_KEY = "re_M2UEqUWF_QEJGCDgmP1mFpLi1DTNL3758";
+const FROM_EMAIL = "SweetWeb <onboarding@resend.dev>"; // Use resend.dev for testing
+
+const resend = new Resend(RESEND_API_KEY);
+
+/* -------------------------------------------------------------------------- */
+/*                            Email Templates                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Order notification email HTML template
+ */
+function orderNotificationTemplate(data: {
+  orderNo: string;
+  table: string | null;
+  items: Array<{ name: string; qty: number; price: number; note?: string }>;
+  subtotal: number;
+  timestamp: string;
+  merchantName: string;
+  dashboardUrl: string;
+}): string {
+  const itemsHtml = data.items
+    .map(
+      (item) => `
+    <tr>
+      <td style="padding: 8px; border-bottom: 1px solid #eee;">
+        ${item.name} ${item.qty > 1 ? `(x${item.qty})` : ""}
+        ${item.note ? `<br/><span style="font-size: 12px; color: #666;">Note: ${item.note}</span>` : ""}
+      </td>
+      <td style="padding: 8px; border-bottom: 1px solid #eee; text-align: right;">
+        ${item.price.toFixed(3)} BHD
+      </td>
+    </tr>
+  `
+    )
+    .join("");
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5;">
+  <div style="max-width: 600px; margin: 0 auto; background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+    <!-- Header -->
+    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 24px; border-radius: 8px 8px 0 0;">
+      <h1 style="margin: 0; font-size: 24px;">🔔 New Order Received!</h1>
+      <p style="margin: 8px 0 0 0; opacity: 0.9;">You have a new order at ${data.merchantName}</p>
+    </div>
+
+    <!-- Order Details -->
+    <div style="padding: 24px;">
+      <div style="background: #f8f9fa; padding: 16px; border-radius: 6px; margin-bottom: 20px;">
+        <h2 style="margin: 0 0 12px 0; font-size: 18px; color: #333;">Order Details</h2>
+        <table style="width: 100%;">
+          <tr>
+            <td style="padding: 4px 0; color: #666;">Order Number:</td>
+            <td style="padding: 4px 0; text-align: right; font-weight: 600; color: #667eea;">${data.orderNo}</td>
+          </tr>
+          ${data.table ? `
+          <tr>
+            <td style="padding: 4px 0; color: #666;">Table:</td>
+            <td style="padding: 4px 0; text-align: right; font-weight: 600;">${data.table}</td>
+          </tr>
+          ` : ""}
+          <tr>
+            <td style="padding: 4px 0; color: #666;">Time:</td>
+            <td style="padding: 4px 0; text-align: right;">${data.timestamp}</td>
+          </tr>
+          <tr>
+            <td style="padding: 4px 0; color: #666;">Status:</td>
+            <td style="padding: 4px 0; text-align: right;">
+              <span style="background: #fef3c7; color: #92400e; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600;">
+                PENDING
+              </span>
+            </td>
+          </tr>
+        </table>
+      </div>
+
+      <!-- Items -->
+      <h3 style="margin: 0 0 12px 0; font-size: 16px; color: #333;">Items</h3>
+      <table style="width: 100%; border-collapse: collapse;">
+        ${itemsHtml}
+        <tr>
+          <td style="padding: 16px 8px 8px 8px; font-weight: 600; font-size: 16px;">Subtotal</td>
+          <td style="padding: 16px 8px 8px 8px; text-align: right; font-weight: 600; font-size: 16px; color: #667eea;">
+            ${data.subtotal.toFixed(3)} BHD
+          </td>
+        </tr>
+      </table>
+
+      <!-- CTA Button -->
+      <div style="margin-top: 24px; text-align: center;">
+        <a href="${data.dashboardUrl}" style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; padding: 12px 32px; border-radius: 6px; font-weight: 600;">
+          View in Dashboard →
+        </a>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div style="padding: 16px 24px; background: #f8f9fa; border-radius: 0 0 8px 8px; text-align: center; color: #666; font-size: 12px;">
+      <p style="margin: 0;">This is an automated notification from SweetWeb</p>
+      <p style="margin: 8px 0 0 0;">Manage your notification preferences in the merchant dashboard</p>
+    </div>
+  </div>
+</body>
+</html>
+  `;
+}
+
+/**
+ * Report email HTML template
+ */
+function reportTemplate(data: {
+  merchantName: string;
+  dateRange: string;
+  totalOrders: number;
+  totalRevenue: number;
+  servedOrders: number;
+  cancelledOrders: number;
+  averageOrder: number;
+  topItems: Array<{ name: string; count: number; revenue: number }>;
+  ordersByStatus: Array<{ status: string; count: number }>;
+  hourlyBreakdown?: Array<{ hour: string; count: number; revenue: number }>;
+}): string {
+  const topItemsHtml = data.topItems
+    .slice(0, 5)
+    .map(
+      (item, idx) => `
+    <tr>
+      <td style="padding: 8px; border-bottom: 1px solid #eee;">${idx + 1}. ${item.name}</td>
+      <td style="padding: 8px; border-bottom: 1px solid #eee; text-align: center;">${item.count}</td>
+      <td style="padding: 8px; border-bottom: 1px solid #eee; text-align: right;">${item.revenue.toFixed(3)} BHD</td>
+    </tr>
+  `
+    )
+    .join("");
+
+  const statusHtml = data.ordersByStatus
+    .map(
+      (s) => `
+    <div style="margin-bottom: 8px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+        <span style="font-size: 14px; text-transform: capitalize;">${s.status}</span>
+        <span style="font-weight: 600;">${s.count}</span>
+      </div>
+      <div style="background: #e5e7eb; height: 8px; border-radius: 4px; overflow: hidden;">
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); height: 100%; width: ${(s.count / data.totalOrders) * 100}%;"></div>
+      </div>
+    </div>
+  `
+    )
+    .join("");
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5;">
+  <div style="max-width: 700px; margin: 0 auto; background: white; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+    <!-- Header -->
+    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 24px; border-radius: 8px 8px 0 0;">
+      <h1 style="margin: 0; font-size: 24px;">📊 Sales Report</h1>
+      <p style="margin: 8px 0 0 0; opacity: 0.9;">${data.merchantName} • ${data.dateRange}</p>
+    </div>
+
+    <!-- Summary Cards -->
+    <div style="padding: 24px;">
+      <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 24px;">
+        <div style="background: #f0fdf4; padding: 16px; border-radius: 6px; border-left: 4px solid #22c55e;">
+          <div style="font-size: 12px; color: #166534; font-weight: 600; margin-bottom: 4px;">TOTAL REVENUE</div>
+          <div style="font-size: 24px; font-weight: 700; color: #15803d;">${data.totalRevenue.toFixed(3)} BHD</div>
+        </div>
+        <div style="background: #eff6ff; padding: 16px; border-radius: 6px; border-left: 4px solid #3b82f6;">
+          <div style="font-size: 12px; color: #1e40af; font-weight: 600; margin-bottom: 4px;">TOTAL ORDERS</div>
+          <div style="font-size: 24px; font-weight: 700; color: #1e3a8a;">${data.totalOrders}</div>
+        </div>
+        <div style="background: #fef3c7; padding: 16px; border-radius: 6px; border-left: 4px solid #f59e0b;">
+          <div style="font-size: 12px; color: #92400e; font-weight: 600; margin-bottom: 4px;">AVG ORDER VALUE</div>
+          <div style="font-size: 24px; font-weight: 700; color: #b45309;">${data.averageOrder.toFixed(3)} BHD</div>
+        </div>
+        <div style="background: #fef2f2; padding: 16px; border-radius: 6px; border-left: 4px solid #ef4444;">
+          <div style="font-size: 12px; color: #991b1b; font-weight: 600; margin-bottom: 4px;">CANCELLED</div>
+          <div style="font-size: 24px; font-weight: 700; color: #b91c1c;">${data.cancelledOrders}</div>
+        </div>
+      </div>
+
+      <!-- Top Items -->
+      <div style="margin-bottom: 24px;">
+        <h2 style="margin: 0 0 12px 0; font-size: 18px; color: #333;">🏆 Top Selling Items</h2>
+        <table style="width: 100%; border-collapse: collapse;">
+          <thead>
+            <tr style="background: #f8f9fa;">
+              <th style="padding: 8px; text-align: left; font-size: 12px; color: #666;">Item</th>
+              <th style="padding: 8px; text-align: center; font-size: 12px; color: #666;">Orders</th>
+              <th style="padding: 8px; text-align: right; font-size: 12px; color: #666;">Revenue</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${topItemsHtml}
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Orders by Status -->
+      <div style="margin-bottom: 24px;">
+        <h2 style="margin: 0 0 12px 0; font-size: 18px; color: #333;">📈 Orders by Status</h2>
+        ${statusHtml}
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div style="padding: 16px 24px; background: #f8f9fa; border-radius: 0 0 8px 8px; text-align: center; color: #666; font-size: 12px;">
+      <p style="margin: 0;">Generated by SweetWeb • ${new Date().toLocaleString()}</p>
+    </div>
+  </div>
+</body>
+</html>
+  `;
+}
+
+/* -------------------------------------------------------------------------- */
+/*                            Public Functions                                */
+/* -------------------------------------------------------------------------- */
+
+export interface OrderNotificationData {
+  orderNo: string;
+  table: string | null;
+  items: Array<{ name: string; qty: number; price: number; note?: string }>;
+  subtotal: number;
+  timestamp: string;
+  merchantName: string;
+  dashboardUrl: string;
+  toEmail: string;
+}
+
+export interface ReportData {
+  merchantName: string;
+  dateRange: string;
+  totalOrders: number;
+  totalRevenue: number;
+  servedOrders: number;
+  cancelledOrders: number;
+  averageOrder: number;
+  topItems: Array<{ name: string; count: number; revenue: number }>;
+  ordersByStatus: Array<{ status: string; count: number }>;
+  toEmail: string;
+}
+
+/**
+ * Send order notification email to merchant
+ */
+export async function sendOrderNotification(data: OrderNotificationData): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  try {
+    const result = await resend.emails.send({
+      from: FROM_EMAIL,
+      to: data.toEmail,
+      subject: `🔔 New Order ${data.orderNo}${data.table ? ` - Table ${data.table}` : ""}`,
+      html: orderNotificationTemplate(data),
+    });
+
+    if (result.error) {
+      logger.error("[sendOrderNotification] Resend error", result.error);
+      return { success: false, error: result.error.message };
+    }
+
+    logger.info("[sendOrderNotification] Email sent", {
+      messageId: result.data?.id,
+      to: data.toEmail,
+      orderNo: data.orderNo,
+    });
+
+    return { success: true, messageId: result.data?.id };
+  } catch (error: any) {
+    logger.error("[sendOrderNotification] Exception", error);
+    return { success: false, error: error.message || String(error) };
+  }
+}
+
+/**
+ * Send report email to merchant
+ */
+export async function sendReport(data: ReportData): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  try {
+    const result = await resend.emails.send({
+      from: FROM_EMAIL,
+      to: data.toEmail,
+      subject: `📊 Sales Report - ${data.dateRange}`,
+      html: reportTemplate(data),
+    });
+
+    if (result.error) {
+      logger.error("[sendReport] Resend error", result.error);
+      return { success: false, error: result.error.message };
+    }
+
+    logger.info("[sendReport] Email sent", {
+      messageId: result.data?.id,
+      to: data.toEmail,
+      dateRange: data.dateRange,
+    });
+
+    return { success: true, messageId: result.data?.id };
+  } catch (error: any) {
+    logger.error("[sendReport] Exception", error);
+    return { success: false, error: error.message || String(error) };
+  }
+}

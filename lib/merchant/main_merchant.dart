@@ -18,6 +18,8 @@ import '../core/branding/branding_providers.dart';
 import 'screens/login_screen.dart';
 import 'screens/products_screen.dart';
 import 'screens/orders_admin_page.dart';
+import 'screens/reports_page.dart';
+import 'screens/settings_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -125,9 +127,28 @@ class _MerchantShellState extends State<_MerchantShell> {
     final pages = <Widget>[
       ProductsScreen(merchantId: widget.merchantId, branchId: widget.branchId),
       const OrdersAdminPage(),
+      const ReportsPage(),
     ];
 
     return Scaffold(
+      appBar: _i == 2
+          ? null
+          : AppBar(
+              title: Text(_i == 0 ? 'Products' : 'Orders'),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.settings_outlined),
+                  tooltip: 'Settings',
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const SettingsPage(),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
       body: pages[_i],
       bottomNavigationBar: NavigationBar(
         selectedIndex: _i,
@@ -142,6 +163,11 @@ class _MerchantShellState extends State<_MerchantShell> {
             icon: Icon(Icons.receipt_long_outlined),
             selectedIcon: Icon(Icons.receipt_long),
             label: 'Orders',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.analytics_outlined),
+            selectedIcon: Icon(Icons.analytics),
+            label: 'Reports',
           ),
         ],
       ),
