@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/config/app_config.dart';
+import '../../core/services/email_service.dart';
 
 class ReportsPage extends ConsumerStatefulWidget {
   const ReportsPage({super.key});
@@ -138,32 +138,116 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
       final merchantId = ref.read(merchantIdProvider);
       final branchId = ref.read(branchIdProvider);
 
-      final functions = FirebaseFunctions.instanceFor(region: 'me-central2');
-      final callable = functions.httpsCallable('generateReport');
+      // Set time range to cover entire days
+      final start = DateTime(
+        _selectedDateRange!.start.year,
+        _selectedDateRange!.start.month,
+        _selectedDateRange!.start.day,
+        0, 0, 0,
+      );
+      final end = DateTime(
+        _selectedDateRange!.end.year,
+        _selectedDateRange!.end.month,
+        _selectedDateRange!.end.day,
+        23, 59, 59, 999,
+      );
 
-      final result = await callable.call({
-        'merchantId': merchantId,
-        'branchId': branchId,
-        'startDate': _selectedDateRange!.start.toIso8601String(),
-        'endDate': _selectedDateRange!.end.toIso8601String(),
-        'toEmail': _emailController.text.trim(),
-      });
+      // Query orders in date range
+      final ordersSnap = await FirebaseFirestore.instance
+          .collection('merchants/$merchantId/branches/$branchId/orders')
+          .where('createdAt', isGreaterThanOrEqualTo: start)
+          .where('createdAt', isLessThanOrEqualTo: end)
+          .get();
+
+      // Calculate stats
+      double totalRevenue = 0;
+      int servedOrders = 0;
+      int cancelledOrders = 0;
+      final ordersByStatus = <String, int>{};
+      final itemCounts = <String, _ItemStats>{};
+
+      for (final doc in ordersSnap.docs) {
+        final order = doc.data();
+        final status = order['status'] as String? ?? 'unknown';
+
+        ordersByStatus[status] = (ordersByStatus[status] ?? 0) + 1;
+
+        if (status == 'served') {
+          servedOrders++;
+          totalRevenue += (order['subtotal'] as num?)?.toDouble() ?? 0.0;
+
+          // Count items
+          final items = order['items'] as List<dynamic>? ?? [];
+          for (final item in items) {
+            final name = item['name'] as String? ?? 'Unknown';
+            final qty = (item['qty'] as num?)?.toInt() ?? 0;
+            final price = (item['price'] as num?)?.toDouble() ?? 0.0;
+
+            if (!itemCounts.containsKey(name)) {
+              itemCounts[name] = _ItemStats(name: name);
+            }
+            itemCounts[name] = itemCounts[name]!.add(qty, price);
+          }
+        } else if (status == 'cancelled') {
+          cancelledOrders++;
+        }
+      }
+
+      // Get merchant name
+      final brandingDoc = await FirebaseFirestore.instance
+          .doc('merchants/$merchantId/branches/$branchId/config/branding')
+          .get();
+      final merchantName = brandingDoc.data()?['title'] as String? ?? 'Your Store';
+
+      // Prepare data
+      final dateRange = '${DateFormat('MM/dd/yyyy').format(start)} - ${DateFormat('MM/dd/yyyy').format(end)}';
+      final topItems = itemCounts.values.toList()
+        ..sort((a, b) => b.count.compareTo(a.count));
+      final statusList = ordersByStatus.entries
+          .map((e) => StatusCount(status: e.key, count: e.value))
+          .toList();
+
+      // Send email via Cloudflare Worker
+      final result = await EmailService.sendReport(
+        merchantName: merchantName,
+        dateRange: dateRange,
+        totalOrders: ordersSnap.docs.length,
+        totalRevenue: totalRevenue,
+        servedOrders: servedOrders,
+        cancelledOrders: cancelledOrders,
+        averageOrder: servedOrders > 0 ? totalRevenue / servedOrders : 0,
+        topItems: topItems
+            .map((item) => TopItem(
+                  name: item.name,
+                  count: item.count,
+                  revenue: item.revenue,
+                ))
+            .toList(),
+        ordersByStatus: statusList,
+        toEmail: _emailController.text.trim(),
+      );
 
       if (mounted) {
-        setState(() {
-          _successMessage =
-              'Report sent to ${_emailController.text.trim()}!\n${result.data['stats']['totalOrders']} orders found.';
-          _isGenerating = false;
-        });
+        if (result.success) {
+          setState(() {
+            _successMessage =
+                'Report sent to ${_emailController.text.trim()}!\n${ordersSnap.docs.length} orders found.';
+            _isGenerating = false;
+          });
 
-        // Show success snackbar
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(_successMessage!),
-            backgroundColor: Colors.green,
-            duration: const Duration(seconds: 4),
-          ),
-        );
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(_successMessage!),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 4),
+            ),
+          );
+        } else {
+          setState(() {
+            _errorMessage = 'Failed to send report: ${result.error}';
+            _isGenerating = false;
+          });
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -438,6 +522,26 @@ class _ReportsPageState extends ConsumerState<ReportsPage> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _ItemStats {
+  final String name;
+  final int count;
+  final double revenue;
+
+  _ItemStats({
+    required this.name,
+    this.count = 0,
+    this.revenue = 0.0,
+  });
+
+  _ItemStats add(int qty, double price) {
+    return _ItemStats(
+      name: name,
+      count: count + qty,
+      revenue: revenue + (qty * price),
     );
   }
 }
